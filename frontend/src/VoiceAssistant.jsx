@@ -38,6 +38,17 @@ IMPORTANT:
   const [showAnswer, setShowAnswer] = useState(false);
   const isGeneratingRef = useRef(false);
 
+  // NEW: WebAudio for silence end-pointer
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const sourceNodeRef = useRef(null);
+  const rafIdRef = useRef(null);
+  const hadSpeechRef = useRef(false);
+  const silenceFramesRef = useRef(0);
+
+  // NEW: Ref to currently playing TTS for barge-in/interrupt
+  const ttsAudioRef = useRef(null);
+
   // Auto-scroll to bottom when new messages are added
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -125,6 +136,24 @@ IMPORTANT:
     return false;
   };
 
+  // NEW: short earcon + optional haptic when EoU detected
+  const playAckEarcon = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880; // A5
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + 0.14);
+      if (navigator.vibrate) navigator.vibrate(10);
+      setTimeout(() => ctx.close(), 300);
+    } catch {}
+  };
+
   const startRecording = async () => {
     console.log('🎙️ Starting recording...');
     setIsListening(true);
@@ -134,6 +163,49 @@ IMPORTANT:
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+
+      // --- WebAudio setup for silence end-pointer ---
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      sourceNodeRef.current = audioContextRef.current.createMediaStreamSource(stream);
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 2048;
+      const buffer = new Float32Array(analyserRef.current.fftSize);
+      sourceNodeRef.current.connect(analyserRef.current);
+
+      hadSpeechRef.current = false;
+      silenceFramesRef.current = 0;
+
+      const rms = (arr) => {
+        let sum = 0; for (let i = 0; i < arr.length; i++) { const v = arr[i]; sum += v * v; }
+        return Math.sqrt(sum / arr.length);
+      };
+
+      const SILENCE_THRESHOLD = 0.012; // tweak empirically
+      const REQUIRED_SILENCE_MS = 500;  // 0.5s of silence to end
+      const FPS = 60;                    // approx frames per second via rAF
+      const REQUIRED_SILENCE_FRAMES = Math.round((REQUIRED_SILENCE_MS / 1000) * FPS);
+
+      const monitor = () => {
+        analyserRef.current.getFloatTimeDomainData(buffer);
+        const level = rms(buffer);
+        if (level > SILENCE_THRESHOLD) {
+          hadSpeechRef.current = true;
+          silenceFramesRef.current = 0;
+        } else if (hadSpeechRef.current) {
+          silenceFramesRef.current += 1;
+          if (silenceFramesRef.current >= REQUIRED_SILENCE_FRAMES) {
+            // End-of-utterance detected
+            playAckEarcon();
+            // Show immediate processing state
+            setIsProcessing(true);
+            stopRecording();
+            return;
+          }
+        }
+        rafIdRef.current = requestAnimationFrame(monitor);
+      };
+
+      rafIdRef.current = requestAnimationFrame(monitor);
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -149,13 +221,16 @@ IMPORTANT:
       };
 
       mediaRecorder.start();
-      
-      // Auto-stop recording after 5 seconds
+
+      // Fallback: hard stop at 10s to avoid getting stuck
       setTimeout(() => {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          console.log('⏱️ Max duration reached, stopping.');
+          playAckEarcon();
+          setIsProcessing(true);
           stopRecording();
         }
-      }, 5000);
+      }, 10000);
 
     } catch (error) {
       console.error('❌ Error starting recording:', error);
@@ -166,6 +241,21 @@ IMPORTANT:
   const stopRecording = () => {
     console.log('⏹️ Stopping recording...');
     setIsListening(false);
+
+    // stop VAD monitoring
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    rafIdRef.current = null;
+
+    try {
+      if (sourceNodeRef.current) sourceNodeRef.current.disconnect();
+      if (analyserRef.current) analyserRef.current.disconnect();
+      sourceNodeRef.current = null;
+      analyserRef.current = null;
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    } catch {}
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
@@ -194,8 +284,8 @@ IMPORTANT:
         console.warn('Filtered out non-English/gibberish transcription:', transcript);
         setIsProcessing(false);
         await startRecording(); // Loop back to listening
-      return;
-    }
+        return;
+      }
 
       // Add the user message to state. The useEffect will trigger the API call.
       const userMessage = { role: "user", content: transcript };
@@ -238,6 +328,8 @@ IMPORTANT:
 
       if (!lastUserMessage.content.toLowerCase().includes('thanks chef')) {
         console.log('🔁 Looping: Listening again...');
+        // Short re-arm to avoid clipping last TTS word
+        await new Promise(r => setTimeout(r, 150));
         await startRecording();
       } else {
         console.log('👋 Conversation ended by user.');
@@ -257,6 +349,13 @@ IMPORTANT:
 
   const speakWithOpenAI = async (text) => {
     try {
+      // Stop any currently playing TTS (barge-in safety)
+      if (ttsAudioRef.current) {
+        try { ttsAudioRef.current.pause(); } catch {}
+        try { URL.revokeObjectURL(ttsAudioRef.current.src); } catch {}
+        ttsAudioRef.current = null;
+      }
+
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,23 +375,24 @@ IMPORTANT:
 
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
+      ttsAudioRef.current = audio;
 
       return new Promise((resolve, reject) => {
         audio.onended = () => {
           console.log('✅ TTS playback finished');
-          URL.revokeObjectURL(audioUrl);
+          try { URL.revokeObjectURL(audioUrl); } catch {}
           resolve();
         };
         
         audio.onerror = (e) => {
           console.error('❌ Audio playback error:', e);
-          URL.revokeObjectURL(audioUrl);
+          try { URL.revokeObjectURL(audioUrl); } catch {}
           reject(new Error('Audio playback error'));
         };
         
         audio.play().catch((err) => {
           console.error('❌ Audio play() error:', err);
-          URL.revokeObjectURL(audioUrl);
+          try { URL.revokeObjectURL(audioUrl); } catch {}
           reject(err);
         });
       });
@@ -300,6 +400,15 @@ IMPORTANT:
     } catch (error) {
       console.error('❌ Error in speakWithOpenAI:', error);
       throw error;
+    }
+  };
+
+  // Allow user to manually barge-in by tapping mic during TTS
+  const interruptTTSIfPlaying = () => {
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause(); } catch {}
+      ttsAudioRef.current.src = '';
+      ttsAudioRef.current = null;
     }
   };
 
@@ -322,6 +431,8 @@ IMPORTANT:
     } else if (isListening) {
       stopRecording();
     } else if (!isProcessing && !isGeneratingRef.current) {
+      // If TTS is playing, interrupt and start listening (barge-in)
+      interruptTTSIfPlaying();
       await startRecording();
     }
   };

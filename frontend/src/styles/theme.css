@@ -1,0 +1,85 @@
+/* Design Tokens: colors, spacing, radii, shadows, typography */
+:root {
+  /* Colors */
+  --color-bg: #0f1115;
+  --color-surface: #12151d;
+  --color-elev-1: #161a23;
+  --color-elev-2: #1a1f2b;
+  --color-primary: #7dd3fc; /* cyan */
+  --color-accent: #f0abfc;  /* pink */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-text: #e7e9ee;
+  --color-text-muted: #9aa0a6;
+  --color-border: #242938;
+
+  /* Radii */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-full: 999px;
+
+  /* Spacing (px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* Shadows */
+  --shadow-1: 0 1px 4px rgba(0,0,0,0.25);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.35);
+  --shadow-3: 0 16px 48px rgba(0,0,0,0.45);
+
+  /* Typography */
+  --font-sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 20px;
+  --font-size-xl: 24px;
+  --line-height: 1.5;
+}
+
+/* Light theme (optional) */
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-bg: #f7f8fb;
+    --color-surface: #ffffff;
+    --color-elev-1: #ffffff;
+    --color-elev-2: #fafafa;
+    --color-text: #111318;
+    --color-text-muted: #596070;
+    --color-border: #e6e8f0;
+  }
+}
+
+/* Base utilities (non-invasive) */
+:where(html) { font-family: var(--font-sans); }
+:where(body) { background: var(--color-bg); color: var(--color-text); }
+
+.visually-hidden {
+  position: absolute !important;
+  height: 1px; width: 1px;
+  overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
+  white-space: nowrap; border: 0; padding: 0; margin: -1px;
+}
+
+.focus-ring:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+.surface {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+
+.pill {
+  border-radius: var(--radius-full);
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-elev-1);
+} 
