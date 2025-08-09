@@ -107,7 +107,6 @@ cd ../frontend && npm install
 
 ## Credits & License
 
-- Created by [Your Name/Team].
+- Created by Tiffany K.
 - Powered by [OpenAI](https://openai.com/).
-- UI inspired by [Zara.com](https://zara.com/).
 - MIT License. 
