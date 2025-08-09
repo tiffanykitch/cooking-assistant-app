@@ -1,112 +1,209 @@
-# Sous Chef Agent
+# PrepTalk — Your Hands‑Free AI Sous Chef
 
-A modern, AI-powered sous chef assistant that helps you cook, learn, and get expert tips in the kitchen. This app combines a Vite + React frontend with an Express + OpenAI backend.
+PrepTalk is a modern, voice‑first cooking companion. Speak naturally, get step‑by‑step guidance, and keep cooking without touching your screen. Under the hood, it pairs a Vite + React frontend with an Express + OpenAI backend for real‑time speech‑to‑text, smart recipe flow, and natural text‑to‑speech.
+
+---
+
+## Why PrepTalk
+
+- **Voice‑first cooking**: Tap the mic, talk to your sous chef, and keep your hands free.
+- **Real‑time flow**: Auto‑loops listening → thinking → speaking until you say “thanks chef.”
+- **Step‑by‑step recipes**: Never dump the whole recipe; guided, timed steps with smart parallelization.
+- **Natural TTS**: Clear, friendly voice using OpenAI TTS streamed back as MP3.
+- **Robust STT**: Transcription with Whisper; filters gibberish/non‑English noise to reduce false triggers.
+- **Production‑ready APIs**: Simple endpoints for chat, parsing, STT, TTS, and tip retrieval.
 
 ---
 
 ## Features
 
-- **Conversational Cooking Assistant:**
-  - Chat with an AI sous chef for recipes, cooking questions, and kitchen advice.
-- **Recipe Parsing:**
-  - Paste a recipe and get a step-by-step breakdown, including ingredients and estimated times.
-- **Expert Cooking Tips:**
-  - On every user input (question or recipe step), the app finds and injects the top 3 most relevant expert tips using vector similarity search.
-- **Text-to-Speech (TTS):**
-  - Enable TTS to have the assistant read responses aloud. Voice navigation for step-by-step cooking.
-- **Responsive & Accessible:**
-  - Works on desktop and mobile, with accessible navigation and controls.
+- **Conversational cooking assistant** powered by `gpt-4o` with a friendly, concise style.
+- **Voice loop UX**:
+  - Press once to start; the app listens, transcribes, replies, speaks, and listens again.
+  - Say “thanks chef” to end.
+- **Recipe runner** logic:
+  - One step at a time; waits for “I’m ready/what’s next?”
+  - Minimizes idle time by overlapping tasks when safe (e.g., prep while simmering).
+  - Clear, specific measurements when instructing mid‑flow.
+- **Recipe parsing**: Paste a recipe to get structured JSON (title, ingredients, steps with estimated minutes).
+- **Whisper STT**: Uploads short `webm` snippets and returns accurate transcripts.
+- **OpenAI TTS**: Uses `tts-1` with a natural voice; streamed back as MP3 for immediate playback.
+- **Expert tips engine (API available)**: Retrieves top‑3 relevant tips via embeddings (`text-embedding-ada-002`).
+- **Minimal, clean UI** with demo prompts and a landing screen to onboard new users.
 
 ---
 
-## How It Works
+## Architecture
 
-### Frontend (Vite + React)
-- Modern React app with clean, minimalist design.
-- Chat interface for user/assistant conversation.
-- Recipe parsing and step navigation.
-- TTS controls and voice command support.
-- Displays expert tips for each step or question.
-
-### Backend (Express + OpenAI)
-- `/api/chat`: Handles chat messages, classifies user input, injects relevant expert tips, and queries OpenAI for responses.
-- `/api/parse-recipe`: Parses pasted recipes into structured steps using OpenAI.
-- `/api/relevant-tips`: Finds the top 3 relevant expert tips for any input using vector similarity (OpenAI embeddings + cosine similarity).
-- Loads a knowledge base of expert cooking tips from `cookingTips.json`.
-
-### OpenAI Integration
-- Uses GPT-3.5-turbo for chat and recipe parsing.
-- Uses `text-embedding-ada-002` for tip similarity search.
-- Injects expert tips into the model context for more helpful, context-aware answers.
+- **Frontend**: React 19 + Vite 7
+  - Main app: `frontend/src/VoiceAssistant.jsx`
+  - Markdown rendering: `react-markdown`
+  - Dev proxy: `/api` → `http://localhost:3000`
+- **Backend**: Express 5
+  - Routes in `backend/index.js`
+  - OpenAI SDK for Chat (`gpt-4o`), Whisper STT (`whisper-1`), and TTS (`tts-1`)
+  - File uploads via `multer` to `uploads/` (temporary)
+- **Embeddings**: `text-embedding-ada-002` with cosine similarity in `backend/getRelevantTips.js`
 
 ---
 
-## Setup Instructions
+## Quick Start
 
-### 1. Clone the Repo
+### Prerequisites
+- Node.js 18+ (recommended)
+- An OpenAI API key
+
+### 1) Clone
 ```bash
 git clone <your-repo-url>
 cd sous-chef-agent
 ```
 
-### 2. Install Dependencies
+### 2) Install dependencies
+- Backend deps are managed at the repo root:
 ```bash
-cd backend && npm install
-cd ../frontend && npm install
+npm install
+```
+- Frontend deps:
+```bash
+cd frontend && npm install
 ```
 
-### 3. Set Up Environment Variables
-- In `backend/.env`, add your OpenAI API key:
-  ```
-  OPENAI_API_KEY=sk-...
-  ```
+### 3) Configure environment
+Create `backend/.env` with:
+```
+OPENAI_API_KEY=sk-...
+```
 
-### 4. Run the App
-- **Backend:**
-  ```bash
-  cd backend
-  node index.js
-  ```
-- **Frontend:**
-  ```bash
-  cd frontend
-  npm run dev
-  ```
-- Visit [http://localhost:5173](http://localhost:5173)
-
----
-
-## Usage Guide
-
-- **Chat:** Type or paste a recipe, ask a cooking question, or just say hi.
-- **Recipe Parsing:** Paste a full recipe to get a step-by-step breakdown.
-- **Expert Tips:** For every question or step, the top 3 relevant expert tips are shown and used by the AI.
-- **TTS:** Click the speaker icon to enable/disable text-to-speech. When enabled, the assistant will read new responses aloud.
-- **Voice Navigation:** Use voice commands ("next", "repeat", "back") during step-by-step cooking.
+### 4) Run
+- Backend (port 3000):
+```bash
+node backend/index.js
+```
+- Frontend (port 5173):
+```bash
+cd frontend
+npm run dev
+```
+Open `http://localhost:5173`.
 
 ---
 
-## Customization
+## Usage
 
-- **Styling:**
-  - Edit `frontend/src/App.zara.css` for UI tweaks.
-  - Fonts: Playfair Display (logo), Inter (UI).
-- **Expert Tips:**
-  - Add or edit tips in `backend/cookingTips.json`.
-- **Model:**
-  - Change OpenAI model in `backend/index.js` if desired.
+- Click the mic to start. Speak naturally (e.g., “How do I make risotto?”).
+- The assistant replies, speaks the response, and starts listening again automatically.
+- Say “thanks chef” to stop. Ask “what’s next?” to advance steps during recipes.
 
 ---
 
-## Troubleshooting
-- **OpenAI API errors:** Check your API key and network connection.
-- **TTS not working:** Make sure your browser supports `window.speechSynthesis` and voices are loaded.
-- **Blank screen:** Check browser console for errors and ensure both backend and frontend are running.
+## API Reference
+All endpoints are proxied under the frontend dev server at `/api` → `http://localhost:3000`.
+
+### POST `/api/chat`
+- Sends the full message history; returns assistant reply.
+- Body:
+```json
+{
+  "messages": [
+    { "role": "system", "content": "You are..." },
+    { "role": "user", "content": "How do I make risotto?" }
+  ]
+}
+```
+- Response:
+```json
+{ "reply": "Let’s start by warming your broth..." }
+```
+
+### POST `/api/parse-recipe`
+- Input free‑form recipe text; returns structured JSON.
+- Body:
+```json
+{ "recipe": "Recipe title...\nIngredients...\nSteps..." }
+```
+- Response:
+```json
+{
+  "status": "ok",
+  "recipe": {
+    "title": "Creamy Risotto",
+    "ingredients": ["Arborio rice", "Chicken stock", "Parmesan"],
+    "steps": [
+      { "step": 1, "instruction": "Warm the stock.", "estimated_time_min": 5 },
+      { "step": 2, "instruction": "Sauté onions...", "estimated_time_min": 8 }
+    ]
+  }
+}
+```
+
+### POST `/api/transcribe`
+- Multipart form: `audio` = `audio/webm` blob (few seconds).
+- Response:
+```json
+{ "transcription": "how do i make risotto" }
+```
+
+### POST `/api/tts`
+- Body:
+```json
+{ "text": "Great choice! Let's get your broth warming." }
+```
+- Response: `audio/mpeg` (MP3 bytes)
+
+### POST `/api/relevant-tips`
+- Body:
+```json
+{ "step": "Stir constantly to avoid scorching the rice..." }
+```
+- Response:
+```json
+{ "status": "ok", "tips": [ { "title": "Tip title", "tip": "Tip text" } ] }
+```
+
+---
+
+## Configuration Notes
+
+- **Models**
+  - Chat: `gpt-4o` (`/api/chat`)
+  - Recipe parsing: `gpt-3.5-turbo` (`/api/parse-recipe`)
+  - STT: `whisper-1` (`/api/transcribe`)
+  - TTS: `tts-1` (`/api/tts`)
+  - Embeddings: `text-embedding-ada-002` (tips engine)
+- **Uploads**
+  - Audio snippets are saved temporarily to `uploads/` and cleaned up after processing.
+- **CORS**
+  - Backend allows `http://localhost:5173` by default (see `backend/index.js`).
+
+---
+
+## Project Structure
+```
+sous-chef-agent/
+  backend/
+    index.js           # Express routes (chat, parse, tips, transcribe, TTS)
+    getRelevantTips.js # Embeddings + cosine similarity
+    cookingTips.json   # Tip knowledge base
+  frontend/
+    src/
+      VoiceAssistant.jsx  # Primary voice-first UI
+      RecipeMessage.jsx   # Nicely renders assistant markdown
+      ttsUtils.js         # Preferred voice picker (browser TTS)
+    vite.config.js        # /api proxy → :3000
+```
+
+---
+
+## Roadmap
+- Surface the expert tips panel during recipe steps
+- Streaming chat responses and partial transcripts
+- Multi-language STT/TTS
+- Offline fallback TTS
 
 ---
 
 ## Credits & License
-
 - Created by Tiffany K.
-- Powered by [OpenAI](https://openai.com/).
-- MIT License. 
+- Powered by [OpenAI](https://openai.com/)
+- MIT License 
