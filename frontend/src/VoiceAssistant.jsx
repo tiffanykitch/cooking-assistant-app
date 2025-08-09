@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, ChefHat, Clock, Users } from 'lucide-react';
 import RecipeMessage from './RecipeMessage';
+import VoiceStateBar from './components/VoiceStateBar.jsx';
+import VoiceMicButton from './components/VoiceMicButton.jsx';
 
 const VoiceAssistant = () => {
   const [isListening, setIsListening] = useState(false);
@@ -37,6 +39,9 @@ IMPORTANT:
   const messagesEndRef = useRef(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const isGeneratingRef = useRef(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
 
   // NEW: WebAudio for silence end-pointer
   const audioContextRef = useRef(null);
@@ -378,20 +383,24 @@ IMPORTANT:
       ttsAudioRef.current = audio;
 
       return new Promise((resolve, reject) => {
+        audio.onplay = () => setIsSpeaking(true);
         audio.onended = () => {
           console.log('✅ TTS playback finished');
+          setIsSpeaking(false);
           try { URL.revokeObjectURL(audioUrl); } catch {}
           resolve();
         };
         
         audio.onerror = (e) => {
           console.error('❌ Audio playback error:', e);
+          setIsSpeaking(false);
           try { URL.revokeObjectURL(audioUrl); } catch {}
           reject(new Error('Audio playback error'));
         };
         
         audio.play().catch((err) => {
           console.error('❌ Audio play() error:', err);
+          setIsSpeaking(false);
           try { URL.revokeObjectURL(audioUrl); } catch {}
           reject(err);
         });
@@ -724,27 +733,20 @@ IMPORTANT:
       backgroundColor: '#ffffff'
     }}>
       {/* Header */}
-      <header style={{
-        padding: '20px 24px',
-        borderBottom: '1px solid #e5e5e5'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ChefHat size={24} color="#1a1a1a" />
-          <h1 style={{ fontSize: '20px', fontWeight: '600', color: '#1a1a1a' }}>PrepTalk</h1>
-        </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}>
-          <Mic size={24} color="#666" />
-          <div style={{
-            fontSize: '14px',
-            color: isListening ? '#007bff' : '#666'
-          }}>
-            {isProcessing ? 'Thinking...' : (isListening ? 'Listening...' : 'Speaking...')}
+      <header style={{ padding: 0, borderBottom: '1px solid var(--color-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ChefHat size={22} color="var(--color-text)" />
+            <h1 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text)' }}>PrepTalk</h1>
           </div>
         </div>
+        <VoiceStateBar
+          isListening={isListening}
+          isProcessing={isProcessing}
+          isSpeaking={isSpeaking}
+          isParsing={isParsing}
+          hasError={hasError}
+        />
       </header>
 
       {/* Message Area */}
@@ -795,29 +797,16 @@ IMPORTANT:
       </main>
 
       {/* Footer / Mic Button */}
-      <footer style={{
-        padding: '24px',
-        borderTop: '1px solid #e5e5e5'
-      }}>
-        <button
-          onClick={handleMicClick}
-          style={{
-            width: '64px',
-            height: '64px',
-            borderRadius: '50%',
-            border: 'none',
-            backgroundColor: isListening ? '#d32f2f' : '#007bff',
-            color: '#ffffff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            boxShadow: isListening ? '0 0 0 10px rgba(0, 123, 255, 0.2)' : '0 4px 12px rgba(0,0,0,0.1)',
-            transition: 'all 0.2s ease-in-out'
-          }}
-        >
-          {isListening ? <MicOff size={32} /> : <Mic size={32} />}
-        </button>
+      <footer style={{ padding: '16px', borderTop: '1px solid var(--color-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <VoiceMicButton
+            isListening={isListening}
+            isProcessing={isProcessing}
+            isSpeaking={isSpeaking}
+            hasError={hasError}
+            onClick={handleMicClick}
+          />
+        </div>
       </footer>
     </div>
   );
