@@ -1,6 +1,6 @@
 # Sous Chef Agent
 
-A modern, AI-powered sous chef assistant that helps you cook, learn, and get expert tips in the kitchen. Built with a minimalist, fashion-inspired UI (inspired by Zara.com), this app combines a Vite + React frontend with an Express + OpenAI backend.
+A modern, AI-powered sous chef assistant that helps you cook, learn, and get expert tips in the kitchen. This app combines a Vite + React frontend with an Express + OpenAI backend.
 
 ---
 
