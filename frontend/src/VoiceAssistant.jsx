@@ -3,6 +3,7 @@ import { Mic, MicOff, ChefHat, Clock, Users } from 'lucide-react';
 import RecipeMessage from './RecipeMessage';
 import VoiceStateBar from './components/VoiceStateBar.jsx';
 import VoiceMicButton from './components/VoiceMicButton.jsx';
+import CommandDock from './components/CommandDock.jsx';
 
 const VoiceAssistant = () => {
   const [isListening, setIsListening] = useState(false);
@@ -798,7 +799,17 @@ IMPORTANT:
 
       {/* Footer / Mic Button */}
       <footer style={{ padding: '16px', borderTop: '1px solid var(--color-border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <CommandDock
+            disabled={isProcessing}
+            showBack={false}
+            onBack={() => setMessages(prev => [...prev, { role: 'user', content: 'Go back one step.' }])}
+            onRepeat={() => setMessages(prev => [...prev, { role: 'user', content: 'Repeat the last instruction.' }])}
+            onNext={() => setMessages(prev => [...prev, { role: 'user', content: "What's next?" }])}
+            isListening={isListening}
+            isProcessing={isProcessing}
+            isSpeaking={isSpeaking}
+          />
           <VoiceMicButton
             isListening={isListening}
             isProcessing={isProcessing}

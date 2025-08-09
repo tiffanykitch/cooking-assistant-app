@@ -53,9 +53,6 @@ export default function VoiceStateBar({ isListening, isProcessing, isSpeaking, i
         <Icon size={18} color={color} />
         <span style={{ color, fontSize: 'var(--font-size-sm)', fontWeight: 600 }}>{label}</span>
       </div>
-      <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-xs)' }}>
-        Say “next”, “repeat”, or “stop”
-      </div>
     </div>
   );
 } 
