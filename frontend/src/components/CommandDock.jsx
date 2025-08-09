@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, RotateCw } from 'lucide-react';
 
 export default function CommandDock({
@@ -10,10 +10,14 @@ export default function CommandDock({
   isListening,
   isProcessing,
   isSpeaking,
+  hasStarted,
 }) {
-  const idle = !isListening && !isProcessing && !isSpeaking;
+  const idle = hasStarted && !isListening && !isProcessing && !isSpeaking;
   const nextRef = useRef(null);
+  const containerRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
 
+  // Gentle cue on Next when idle
   useEffect(() => {
     if (!nextRef.current || !idle) return;
     nextRef.current.animate(
@@ -22,8 +26,30 @@ export default function CommandDock({
     );
   }, [idle]);
 
+  // Auto-collapse to hint after a short delay when idle
+  useEffect(() => {
+    if (!idle) return; // only collapse when idle
+    const t = setTimeout(() => setExpanded(false), 3500);
+    return () => clearTimeout(t);
+  }, [idle]);
+
+  // Expand on keyboard focus inside
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onFocusIn = () => setExpanded(true);
+    const onMouseEnter = () => setExpanded(true);
+    el.addEventListener('focusin', onFocusIn);
+    el.addEventListener('mouseenter', onMouseEnter);
+    return () => {
+      el.removeEventListener('focusin', onFocusIn);
+      el.removeEventListener('mouseenter', onMouseEnter);
+    };
+  }, []);
+
   const Container = ({ children }) => (
     <div
+      ref={containerRef}
       className="surface"
       style={{
         display: 'inline-flex',
@@ -79,22 +105,56 @@ export default function CommandDock({
     );
   });
 
+  // Voice-first hint UI
+  const Hint = () => (
+    <button
+      onClick={() => setExpanded(true)}
+      className="focus-ring"
+      style={{
+        height: 40,
+        padding: '0 14px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 10,
+        borderRadius: 'var(--radius-full)',
+        border: '1px dashed var(--color-border)',
+        background: 'transparent',
+        color: 'var(--color-text-muted)',
+        boxShadow: 'none',
+        opacity: disabled ? 0.7 : 1,
+      }}
+      aria-label="Hint: say next or repeat"
+    >
+      {/* Tiny waveform icon */}
+      <svg width="22" height="14" viewBox="0 0 44 14" aria-hidden="true">
+        <polyline points="0,7 6,7 8,2 10,12 12,4 14,10 16,6 18,8 20,5 22,9 24,3 26,11 28,6 30,7 36,7 44,7" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.7" />
+      </svg>
+      <span style={{ fontSize: 'var(--font-size-sm)' }}>
+        Say ‘Next’ or ‘Repeat’
+      </span>
+    </button>
+  );
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingBottom: 6 }}>
-      <Container>
-        {showBack && (
-          <Segment icon={ArrowLeft} label="Back" onClick={onBack} ariaLabel="Go back one step" />
-        )}
-        <Segment icon={RotateCw} label="Repeat" onClick={onRepeat} ariaLabel="Repeat the last instruction" />
-        <Segment
-          ref={nextRef}
-          icon={ArrowRight}
-          label="Next"
-          onClick={onNext}
-          active
-          ariaLabel="Go to the next step"
-        />
-      </Container>
+      {idle && !expanded ? (
+        <Hint />
+      ) : (
+        <Container>
+          {showBack && (
+            <Segment icon={ArrowLeft} label="Back" onClick={onBack} ariaLabel="Go back one step" />
+          )}
+          <Segment icon={RotateCw} label="Repeat" onClick={onRepeat} ariaLabel="Repeat the last instruction" />
+          <Segment
+            ref={nextRef}
+            icon={ArrowRight}
+            label="Next"
+            onClick={onNext}
+            active
+            ariaLabel="Go to the next step"
+          />
+        </Container>
+      )}
     </div>
   );
 } 

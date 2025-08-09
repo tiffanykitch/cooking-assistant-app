@@ -809,6 +809,7 @@ IMPORTANT:
             isListening={isListening}
             isProcessing={isProcessing}
             isSpeaking={isSpeaking}
+            hasStarted={hasStarted}
           />
           <VoiceMicButton
             isListening={isListening}
