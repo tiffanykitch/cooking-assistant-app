@@ -805,11 +805,6 @@ IMPORTANT:
             showBack={false}
             onBack={() => setMessages(prev => [...prev, { role: 'user', content: 'Go back one step.' }])}
             onRepeat={() => setMessages(prev => [...prev, { role: 'user', content: 'Repeat the last instruction.' }])}
-            onNext={() => setMessages(prev => [...prev, { role: 'user', content: "What's next?" }])}
-            isListening={isListening}
-            isProcessing={isProcessing}
-            isSpeaking={isSpeaking}
-            hasStarted={hasStarted}
           />
           <VoiceMicButton
             isListening={isListening}
