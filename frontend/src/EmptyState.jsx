@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import "./EmptyState.css";
+import RecipeURLBar from "./components/RecipeURLBar.jsx";
 
 const GREETINGS = [
   {
@@ -8,7 +9,7 @@ const GREETINGS = [
   }
 ];
 
-export default function EmptyState() {
+export default function EmptyState({ onRecipeParsed }) {
   // Pick a greeting once per session
   const greeting = useMemo(() => {
     const idx = Math.floor(Math.random() * GREETINGS.length);
@@ -20,6 +21,9 @@ export default function EmptyState() {
       <div className="empty-state-container">
         <h1 className="empty-state-headline">{greeting.headline}</h1>
         <p className="empty-state-subtitle">{greeting.sub}</p>
+        <div style={{ marginTop: 16 }}>
+          <RecipeURLBar onParsed={onRecipeParsed} />
+        </div>
       </div>
     </div>
   );

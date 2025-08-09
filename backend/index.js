@@ -8,6 +8,7 @@ const multer = require('multer'); // New import
 const { getRelevantTips } = require('./getRelevantTips');
 const axios = require('axios'); // New import
 const FormData = require('form-data'); // New import
+const cheerio = require('cheerio'); // New import
 
 dotenv.config();
 
@@ -29,6 +30,102 @@ const openai = new OpenAI({
 
 // Load cooking tips knowledge base once at startup
 const cookingTips = JSON.parse(fs.readFileSync(path.join(__dirname, 'cookingTips.json'), 'utf8'));
+
+// Simple in-memory LRU-ish cache for ingested URLs
+const urlCache = new Map();
+function cacheGet(url) {
+  const item = urlCache.get(url);
+  if (!item) return null;
+  return item;
+}
+function cacheSet(url, value) {
+  urlCache.set(url, value);
+  if (urlCache.size > 50) {
+    // remove oldest
+    const firstKey = urlCache.keys().next().value;
+    urlCache.delete(firstKey);
+  }
+}
+
+function isoDurationToMinutes(iso) {
+  if (!iso) return null;
+  // Parse simple ISO8601 duration like PT1H30M, PT45M
+  const m = String(iso).match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)$/i);
+  if (!m) return null;
+  const hours = parseInt(m[1] || '0', 10);
+  const minutes = parseInt(m[2] || '0', 10);
+  const seconds = parseInt(m[3] || '0', 10);
+  return hours * 60 + minutes + Math.round(seconds / 60);
+}
+
+function normalizeRecipeFromLd(ld, url) {
+  try {
+    const data = Array.isArray(ld) ? ld : [ld];
+    const recipe = data.find((node) => {
+      const type = node['@type'];
+      return type && (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe')));
+    });
+    if (!recipe) return null;
+
+    const title = recipe.name || 'Untitled Recipe';
+    const ingredients = Array.isArray(recipe.recipeIngredient) ? recipe.recipeIngredient : [];
+
+    let steps = [];
+    if (Array.isArray(recipe.recipeInstructions)) {
+      steps = recipe.recipeInstructions.map((s, idx) => {
+        if (typeof s === 'string') return { step: idx + 1, instruction: s, estimated_time_min: null };
+        const text = s.text || s.name || '';
+        const est = isoDurationToMinutes(s.totalTime || s.prepTime || s.cookTime || recipe.totalTime);
+        return { step: idx + 1, instruction: text, estimated_time_min: est || null };
+      });
+    } else if (typeof recipe.recipeInstructions === 'string') {
+      const lines = recipe.recipeInstructions.split(/\n+/).filter(Boolean);
+      steps = lines.map((line, i) => ({ step: i + 1, instruction: line.trim(), estimated_time_min: null }));
+    }
+
+    const totalMinutes = isoDurationToMinutes(recipe.totalTime) || null;
+
+    return {
+      title,
+      ingredients,
+      steps,
+      meta: {
+        url,
+        siteName: new URL(url).hostname.replace('www.', ''),
+        image: recipe.image && (Array.isArray(recipe.image) ? recipe.image[0] : recipe.image),
+        author: recipe.author && (typeof recipe.author === 'string' ? recipe.author : recipe.author?.name),
+        totalMinutes,
+      }
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function parseRecipeWithLLM(rawText) {
+  const prompt = `Extract the following recipe into JSON with this format:\n{\n  "title": string,\n  "ingredients": [string],\n  "steps": [ { "step": number, "instruction": string, "estimated_time_min": number } ]\n}\nRecipe:\n${rawText}\nReturn only valid JSON.`;
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-3.5-turbo',
+    messages: [
+      { role: 'system', content: 'You are a sous chef recipe parser.' },
+      { role: 'user', content: prompt }
+    ],
+    max_tokens: 600,
+    temperature: 0,
+  });
+  const text = completion.choices?.[0]?.message?.content || '';
+  let recipeJson = null;
+  try {
+    recipeJson = JSON.parse(text);
+  } catch (err) {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) recipeJson = JSON.parse(match[0]);
+  }
+  if (!recipeJson || !recipeJson.title || !recipeJson.ingredients || !recipeJson.steps) {
+    throw new Error('Could not parse recipe.');
+  }
+  return recipeJson;
+}
 
 app.get('/api/test', async (req, res) => {
   console.log('🔁 FE → BE connection working');
@@ -127,6 +224,58 @@ app.post('/api/parse-recipe', async (req, res) => {
   } catch (error) {
     console.error('[SousChefParse] Error parsing recipe:', error);
     res.status(500).json({ status: 'error', message: error.message || 'Unknown error.' });
+  }
+});
+
+app.post('/api/ingest-recipe-url', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ status: 'error', message: 'No URL provided.' });
+    }
+    const normalized = url.trim();
+
+    const cached = cacheGet(normalized);
+    if (cached) {
+      return res.json({ status: 'ok', recipe: cached });
+    }
+
+    const response = await axios.get(normalized, {
+      timeout: 12000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    const html = response.data;
+    const $ = cheerio.load(html);
+
+    // Try JSON-LD
+    let parsed = null;
+    $('script[type="application/ld+json"]').each((_, el) => {
+      if (parsed) return;
+      try {
+        const json = JSON.parse($(el).contents().text());
+        const norm = normalizeRecipeFromLd(json, normalized);
+        if (norm && norm.steps && norm.steps.length > 0) parsed = norm;
+      } catch {}
+    });
+
+    // Fallback to LLM-based parsing
+    if (!parsed) {
+      const articleText = $('article').text().trim() || $('main').text().trim() || $('body').text().trim();
+      const truncated = articleText.replace(/\s+/g, ' ').slice(0, 12000);
+      parsed = await parseRecipeWithLLM(truncated);
+      parsed.meta = parsed.meta || {};
+      parsed.meta.url = normalized;
+      parsed.meta.siteName = new URL(normalized).hostname.replace('www.', '');
+    }
+
+    cacheSet(normalized, parsed);
+    res.json({ status: 'ok', recipe: parsed });
+  } catch (error) {
+    console.error('[IngestURL] Error:', error?.response?.status, error?.message);
+    res.status(500).json({ status: 'error', message: error.message || 'Ingest failed' });
   }
 });
 
