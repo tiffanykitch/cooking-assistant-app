@@ -14,8 +14,6 @@ A modern, AI-powered sous chef assistant that helps you cook, learn, and get exp
   - On every user input (question or recipe step), the app finds and injects the top 3 most relevant expert tips using vector similarity search.
 - **Text-to-Speech (TTS):**
   - Enable TTS to have the assistant read responses aloud. Voice navigation for step-by-step cooking.
-- **Minimalist, Elegant UI:**
-  - Inspired by Zara.com: lots of white space, elegant typography, and a fashion-forward look.
 - **Responsive & Accessible:**
   - Works on desktop and mobile, with accessible navigation and controls.
 
