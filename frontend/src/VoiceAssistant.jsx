@@ -3,6 +3,7 @@ import { Mic, MicOff, ChefHat, Clock, Users } from 'lucide-react';
 import RecipeMessage from './RecipeMessage';
 import VoiceStateBar from './components/VoiceStateBar.jsx';
 import VoiceMicButton from './components/VoiceMicButton.jsx';
+import StepCard from './components/StepCard.jsx';
 
 const VoiceAssistant = () => {
   const [isListening, setIsListening] = useState(false);
@@ -794,6 +795,17 @@ IMPORTANT:
         ))}
         {/* Auto-scroll target */}
         <div ref={messagesEndRef} />
+
+        {/* Step mode visual (placeholder until tight integration) */}
+        {/* This will be bound to useStepMode state in the next subphase */}
+        {/* <StepCard
+          stepText={currentStep}
+          stepIndex={currentStepIndex}
+          totalSteps={totalSteps}
+          waitingForConfirm={waitingForConfirm}
+          timerEndsAt={timerEndsAt}
+          paused={paused}
+        /> */}
       </main>
 
       {/* Footer / Mic Button */}
