@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, ChefHat, Clock, Users } from 'lucide-react';
+import { Mic, MicOff, ChefHat } from 'lucide-react';
 import RecipeMessage from './RecipeMessage';
 import VoiceStateBar from './components/VoiceStateBar.jsx';
 import VoiceMicButton from './components/VoiceMicButton.jsx';
@@ -293,7 +293,81 @@ IMPORTANT:
         return;
       }
 
-      // Add the user message to state. The useEffect will trigger the API call.
+      // Intercept math/state intents before sending to LLM
+      const lower = transcript.toLowerCase();
+      const scaleMatch = lower.match(/^(double|triple|halve|scale to\s*(\d+))|^(scale)\s*(\d+)x/);
+      const convertMatch = lower.match(/(convert|switch) (to )?(metric|imperial|grams|ml)/);
+      const howMuchMatch = lower.match(/^(how much|what amount|quantity of)\s+(.+?)(\?|$)/);
+
+      if (scaleMatch) {
+        let factor = 1;
+        if (lower.includes('double')) factor = 2;
+        else if (lower.includes('triple')) factor = 3;
+        else if (lower.includes('halve')) factor = 0.5;
+        else {
+          const num = lower.match(/(\d+)/);
+          if (num) factor = Number(num[1]);
+        }
+        try {
+          const res = await fetch('/api/recipe/apply', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: { type: 'scale', factor } })
+          });
+          const json = await res.json();
+          const msg = `Okay, scaling the recipe to ${factor}x. Ask me for any ingredient amount when you need it.`;
+          setMessages(prev => [...prev, { role: 'user', content: transcript }, { role: 'assistant', content: msg }]);
+          await speakWithOpenAI(msg);
+          // Re-arm listening
+          await new Promise(r => setTimeout(r, 150));
+          await startRecording();
+          return;
+        } catch (e) {
+          console.error('scale apply error', e);
+        }
+      }
+
+      if (convertMatch) {
+        const target = lower.includes('metric') || lower.includes('grams') || lower.includes('ml') ? 'metric' : 'imperial';
+        try {
+          const res = await fetch('/api/recipe/apply', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: { type: 'convert_units', target } })
+          });
+          const json = await res.json();
+          const msg = `Got it. I switched units to ${target}.`;
+          setMessages(prev => [...prev, { role: 'user', content: transcript }, { role: 'assistant', content: msg }]);
+          await speakWithOpenAI(msg);
+          await new Promise(r => setTimeout(r, 150));
+          await startRecording();
+          return;
+        } catch (e) {
+          console.error('convert apply error', e);
+        }
+      }
+
+      if (howMuchMatch) {
+        // Extract ingredient name heuristically
+        const name = howMuchMatch[2]?.trim();
+        if (name) {
+          try {
+            const url = `/api/recipe/ingredient?name=${encodeURIComponent(name)}`;
+            const res = await fetch(url);
+            const json = await res.json();
+            if (json?.status === 'ok') {
+              const msg = `${json.text}.`;
+              setMessages(prev => [...prev, { role: 'user', content: transcript }, { role: 'assistant', content: msg }]);
+              await speakWithOpenAI(msg);
+              await new Promise(r => setTimeout(r, 150));
+              await startRecording();
+              return;
+            }
+          } catch (e) {
+            console.error('ingredient fetch error', e);
+          }
+        }
+      }
+
+      // Default: Add the user message to state. The useEffect will trigger the API call.
       const userMessage = { role: "user", content: transcript };
       setMessages(prev => [...prev, userMessage]);
 
@@ -451,6 +525,9 @@ IMPORTANT:
     if (!date || !(date instanceof Date)) return '';
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
+
+  // Helper: group-start detection for badges
+  const isGroupStart = (index, msgs) => index === 0 || msgs[index - 1].role !== msgs[index].role;
 
   if (!hasStarted) {
     // Landing Screen
@@ -668,58 +745,7 @@ IMPORTANT:
           </p>
         </div>
 
-        {/* Social Proof Section */}
-        <div style={{
-          backgroundColor: '#ffffff',
-          borderTop: '1px solid #f0f0f0',
-          padding: '32px 24px',
-          textAlign: 'center'
-        }}>
-          <div style={{
-            maxWidth: '800px',
-            margin: '0 auto'
-          }}>
-            <p style={{
-              fontSize: '14px',
-              color: '#666666',
-              marginBottom: '20px'
-            }}>
-              Trusted by home chefs worldwide
-            </p>
-
-            <div style={{
-              display: 'flex',
-              justifyContent: 'center',
-              gap: '40px',
-              flexWrap: 'wrap'
-            }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <ChefHat size={16} color="#007bff" />
-                <span style={{ fontSize: '14px', color: '#666666' }}>1000+ recipes supported</span>
-              </div>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <Clock size={16} color="#007bff" />
-                <span style={{ fontSize: '14px', color: '#666666' }}>Real-time guidance</span>
-              </div>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}>
-                <Users size={16} color="#007bff" />
-                <span style={{ fontSize: '14px', color: '#666666' }}>Hands-free cooking</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* Social Proof Section removed */}
       </div>
     );
   }
@@ -734,20 +760,27 @@ IMPORTANT:
       backgroundColor: '#ffffff'
     }}>
       {/* Header */}
-      <header style={{ padding: 0, borderBottom: '1px solid var(--color-border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ChefHat size={22} color="var(--color-text)" />
-            <h1 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text)' }}>PrepTalk</h1>
+      <header style={{
+        padding: '20px 24px',
+        borderBottom: '1px solid #e5e5e5'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ChefHat size={24} color="#1a1a1a" />
+          <h1 style={{ fontSize: '20px', fontWeight: '600', color: '#1a1a1a' }}>PrepTalk</h1>
+        </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <Mic size={24} color="#666" />
+          <div style={{
+            fontSize: '14px',
+            color: isListening ? '#007bff' : '#666'
+          }}>
+            {isProcessing ? 'Thinking...' : (isListening ? 'Listening...' : 'Speaking...')}
           </div>
         </div>
-        <VoiceStateBar
-          isListening={isListening}
-          isProcessing={isProcessing}
-          isSpeaking={isSpeaking}
-          isParsing={isParsing}
-          hasError={hasError}
-        />
       </header>
 
       {/* Message Area */}
@@ -759,6 +792,18 @@ IMPORTANT:
         flexDirection: 'column',
         gap: '16px'
       }}>
+        {/* Step summary (basic) */}
+        {messages.length > 1 && messages[messages.length - 1].role === 'assistant' && (
+          <StepCard
+            title={null}
+            stepText={messages[messages.length - 1].content}
+            stepIndex={0}
+            totalSteps={1}
+            status={'info'}
+            etaMs={null}
+            startedAtMs={null}
+          />
+        )}
         {/* Messages */}
         {messages.map((message, index) => (
           message.role !== 'system' && (
@@ -795,30 +840,32 @@ IMPORTANT:
         ))}
         {/* Auto-scroll target */}
         <div ref={messagesEndRef} />
-
-        {/* Step mode visual (placeholder until tight integration) */}
-        {/* This will be bound to useStepMode state in the next subphase */}
-        {/* <StepCard
-          stepText={currentStep}
-          stepIndex={currentStepIndex}
-          totalSteps={totalSteps}
-          waitingForConfirm={waitingForConfirm}
-          timerEndsAt={timerEndsAt}
-          paused={paused}
-        /> */}
       </main>
 
       {/* Footer / Mic Button */}
-      <footer style={{ padding: '16px', borderTop: '1px solid var(--color-border)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-          <VoiceMicButton
-            isListening={isListening}
-            isProcessing={isProcessing}
-            isSpeaking={isSpeaking}
-            hasError={hasError}
-            onClick={handleMicClick}
-          />
-        </div>
+      <footer style={{
+        padding: '24px',
+        borderTop: '1px solid #e5e5e5'
+      }}>
+        <button
+          onClick={handleMicClick}
+          style={{
+            width: '64px',
+            height: '64px',
+            borderRadius: '50%',
+            border: 'none',
+            backgroundColor: isListening ? '#d32f2f' : '#007bff',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            boxShadow: isListening ? '0 0 0 10px rgba(0, 123, 255, 0.2)' : '0 4px 12px rgba(0,0,0,0.1)',
+            transition: 'all 0.2s ease-in-out'
+          }}
+        >
+          {isListening ? <MicOff size={32} /> : <Mic size={32} />}
+        </button>
       </footer>
     </div>
   );
