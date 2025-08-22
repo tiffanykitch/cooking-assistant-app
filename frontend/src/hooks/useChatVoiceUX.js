@@ -25,7 +25,7 @@ export function useChatVoiceUX(onNewUserMessage) {
     formData.append('audio', audioBlob, 'speech.webm');
 
     try {
-      const res = await fetch(getApiUrl('/transcribe'), { method: 'POST', body: formData });
+      const res = await fetch(getApiUrl('/api/transcribe'), { method: 'POST', body: formData });
       const data = await res.json();
       if (data.text) {
         console.log('[useChatVoiceUX] Transcription received:', data.text);

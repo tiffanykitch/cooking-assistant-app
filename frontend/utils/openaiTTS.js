@@ -1,7 +1,7 @@
 import { getApiUrl } from '../src/utils/apiConfig.js';
 
 export async function speakWithOpenAI(text) {
-  const response = await fetch(getApiUrl('/tts'), {
+  const response = await fetch(getApiUrl('/api/tts'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
