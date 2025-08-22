@@ -321,12 +321,8 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ error: 'No audio file uploaded' });
     }
 
-    const originalPath = req.file.path;
-    const webmPath = originalPath + '.webm';
-    fs.renameSync(originalPath, webmPath);
-
     const formData = new FormData();
-    formData.append('file', fs.createReadStream(webmPath), {
+    formData.append('file', req.file.buffer, {
       filename: 'audio.webm',
       contentType: 'audio/webm',
     });
@@ -340,8 +336,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     });
 
     console.log('[Backend] Whisper transcription response:', response.data);
-
-    fs.unlinkSync(webmPath); // cleanup
 
     res.json({ transcription: response.data.text });
   } catch (error) {
