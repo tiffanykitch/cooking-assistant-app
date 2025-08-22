@@ -82,8 +82,13 @@ Create `frontend/.env` with:
 VITE_API_BASE_URL=http://localhost:3000
 
 # For production (your Render backend URL)
-# VITE_API_BASE_URL=https://your-backend-service.onrender.com
+VITE_API_BASE_URL=https://your-backend-service.onrender.com
 ```
+
+**For Netlify Deployment:**
+Set environment variable in Netlify dashboard:
+- Key: `VITE_API_BASE_URL`
+- Value: `https://your-backend-service.onrender.com`
 
 ### 4) Run
 - Backend (port 3000):

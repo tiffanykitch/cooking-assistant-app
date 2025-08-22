@@ -1,5 +1,6 @@
 // API configuration for frontend
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+// Use VITE_ prefix for Vite environment variables
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://your-backend-service.onrender.com';
 
 export const getApiUrl = (endpoint) => {
   // Remove leading slash if present to avoid double slashes

@@ -16,7 +16,11 @@ const app = express();
 const PORT = 3000;
 
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: [
+    "https://loquacious-dango-585db1.netlify.app", // Netlify frontend URL
+    "http://localhost:5173" // for local development
+  ],
+  credentials: true
 }));
 
 app.use(express.json());
