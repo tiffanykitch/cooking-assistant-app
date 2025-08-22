@@ -7,7 +7,7 @@ PrepTalk is a modern, voice‑first cooking companion. Speak naturally, get step
 ## Why PrepTalk
 
 - **Voice‑first cooking**: Tap the mic, talk to your sous chef, and keep your hands free.
-- **Real‑time flow**: Auto‑loops listening → thinking → speaking until you say “thanks chef.”
+- **Real‑time flow**: Auto‑loops listening → thinking → speaking until you say "thanks chef."
 - **Step‑by‑step recipes**: Never dump the whole recipe; guided, timed steps with smart parallelization.
 - **Natural TTS**: Clear, friendly voice using OpenAI TTS streamed back as MP3.
 - **Robust STT**: Transcription with Whisper; filters gibberish/non‑English noise to reduce false triggers.
@@ -20,9 +20,9 @@ PrepTalk is a modern, voice‑first cooking companion. Speak naturally, get step
 - **Conversational cooking assistant** powered by `gpt-4o` with a friendly, concise style.
 - **Voice loop UX**:
   - Press once to start; the app listens, transcribes, replies, speaks, and listens again.
-  - Say “thanks chef” to end.
+  - Say "thanks chef" to end.
 - **Recipe runner** logic:
-  - One step at a time; waits for “I’m ready/what’s next?”
+  - One step at a time; waits for "I'm ready/what's next?"
   - Minimizes idle time by overlapping tasks when safe (e.g., prep while simmering).
   - Clear, specific measurements when instructing mid‑flow.
 - **Recipe parsing**: Paste a recipe to get structured JSON (title, ingredients, steps with estimated minutes).
@@ -71,29 +71,39 @@ cd frontend && npm install
 
 ### 3) Configure environment
 Create `backend/.env` with:
-  ```
-  OPENAI_API_KEY=sk-...
-  ```
+```
+OPENAI_API_KEY=sk-...
+```
+
+**Frontend Environment Setup:**
+Create `frontend/.env` with:
+```
+# For development (local backend)
+VITE_API_BASE_URL=http://localhost:3000
+
+# For production (your Render backend URL)
+# VITE_API_BASE_URL=https://your-backend-service.onrender.com
+```
 
 ### 4) Run
 - Backend (port 3000):
-  ```bash
+```bash
 node backend/index.js
-  ```
+```
 - Frontend (port 5173):
-  ```bash
-  cd frontend
-  npm run dev
-  ```
+```bash
+cd frontend
+npm run dev
+```
 Open `http://localhost:5173`.
 
 ---
 
 ## Usage
 
-- Click the mic to start. Speak naturally (e.g., “How do I make risotto?”).
+- Click the mic to start. Speak naturally (e.g., "How do I make risotto?").
 - The assistant replies, speaks the response, and starts listening again automatically.
-- Say “thanks chef” to stop. Ask “what’s next?” to advance steps during recipes.
+- Say "thanks chef" to stop. Ask "what's next?" to advance steps during recipes.
 
 ---
 
@@ -113,7 +123,7 @@ All endpoints are proxied under the frontend dev server at `/api` → `http://lo
 ```
 - Response:
 ```json
-{ "reply": "Let’s start by warming your broth..." }
+{ "reply": "Let's start by warming your broth..." }
 ```
 
 ### POST `/api/parse-recipe`
@@ -190,6 +200,8 @@ sous-chef-agent/
       VoiceAssistant.jsx  # Primary voice-first UI
       RecipeMessage.jsx   # Nicely renders assistant markdown
       ttsUtils.js         # Preferred voice picker (browser TTS)
+      utils/
+        apiConfig.js      # API base URL configuration
     vite.config.js        # /api proxy → :3000
 ```
 

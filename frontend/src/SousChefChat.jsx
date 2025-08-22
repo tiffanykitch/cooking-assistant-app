@@ -3,6 +3,7 @@ import MicButton from '../components/MicButton';
 import { useTTS } from './hooks/useTTS';
 import { useStepMode } from './hooks/useStepMode';
 import { useChatVoiceUX } from './hooks/useChatVoiceUX';
+import { getApiUrl } from './utils/apiConfig.js';
 
 const AVATARS = {
   user: (
@@ -85,7 +86,7 @@ export default function SousChefChat() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(getApiUrl('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Pass full conversation history for context

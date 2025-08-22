@@ -1,9 +1,11 @@
+import { getApiUrl } from '../src/utils/apiConfig.js';
+
 export async function transcribeAudioWithWhisper(audioFile) {
   const formData = new FormData();
   formData.append('audio', audioFile);
 
   try {
-    const res = await fetch('/api/transcribe', {
+    const res = await fetch(getApiUrl('/transcribe'), {
       method: 'POST',
       body: formData,
     });

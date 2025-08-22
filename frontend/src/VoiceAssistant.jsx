@@ -4,6 +4,7 @@ import RecipeMessage from './RecipeMessage';
 import VoiceStateBar from './components/VoiceStateBar.jsx';
 import VoiceMicButton from './components/VoiceMicButton.jsx';
 import StepCard from './components/StepCard.jsx';
+import { getApiUrl } from './utils/apiConfig.js';
 
 const VoiceAssistant = () => {
   const [isListening, setIsListening] = useState(false);
@@ -287,7 +288,7 @@ DATA & ACCURACY:
       const formData = new FormData();
       formData.append('audio', audioBlob);
 
-      const response = await fetch('/api/transcribe', {
+      const response = await fetch(getApiUrl('/transcribe'), {
         method: 'POST',
         body: formData,
       });
@@ -323,7 +324,7 @@ DATA & ACCURACY:
           if (num) factor = Number(num[1]);
         }
         try {
-          const res = await fetch('/api/recipe/apply', {
+          const res = await fetch(getApiUrl('/recipe/apply'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: { type: 'scale', factor } })
           });
@@ -343,7 +344,7 @@ DATA & ACCURACY:
       if (convertMatch) {
         const target = lower.includes('metric') || lower.includes('grams') || lower.includes('ml') ? 'metric' : 'imperial';
         try {
-          const res = await fetch('/api/recipe/apply', {
+          const res = await fetch(getApiUrl('/recipe/apply'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: { type: 'convert_units', target } })
           });
@@ -364,7 +365,7 @@ DATA & ACCURACY:
         const name = howMuchMatch[2]?.trim();
         if (name) {
           try {
-            const url = `/api/recipe/ingredient?name=${encodeURIComponent(name)}`;
+            const url = getApiUrl(`/recipe/ingredient?name=${encodeURIComponent(name)}`);
             const res = await fetch(url);
             const json = await res.json();
             if (json?.status === 'ok') {
@@ -397,7 +398,7 @@ DATA & ACCURACY:
     if (!looksLikeRecipe) return false;
     try {
       setIsParsing(true);
-      const res = await fetch('/api/recipe/init', {
+      const res = await fetch(getApiUrl('/recipe/init'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipe: text, isParsed: false })
       });
@@ -438,7 +439,7 @@ DATA & ACCURACY:
 
       console.log("📤 Sending full history:", messages);
 
-      const response = await fetch('/api/chat', {
+      const response = await fetch(getApiUrl('/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: messages }), // Send the full, current messages state
@@ -487,7 +488,7 @@ DATA & ACCURACY:
         ttsAudioRef.current = null;
       }
 
-      const response = await fetch('/api/tts', {
+      const response = await fetch(getApiUrl('/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),

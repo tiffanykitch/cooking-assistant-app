@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTTS } from './useTTS';
+import { getApiUrl } from '../utils/apiConfig.js';
 
 export function useChatVoiceUX(onNewUserMessage) {
   const { speak, speaking, voiceSupported } = useTTS();
@@ -24,7 +25,7 @@ export function useChatVoiceUX(onNewUserMessage) {
     formData.append('audio', audioBlob, 'speech.webm');
 
     try {
-      const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
+      const res = await fetch(getApiUrl('/transcribe'), { method: 'POST', body: formData });
       const data = await res.json();
       if (data.text) {
         console.log('[useChatVoiceUX] Transcription received:', data.text);
