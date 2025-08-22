@@ -1,205 +1,184 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 const RECIPE_MODE_PHRASES = [
-  'recipe for', 'how to make', 'steps to prepare', 'cook this', 'guide me through'
+  "recipe for", "how to make", "steps to prepare", "cook this", "guide me through"
 ];
 
-const NEXT_STEP_COMMANDS = ['next', 'next step', 'continue', 'go on'];
-const REPEAT_STEP_COMMANDS = ['repeat', 'say again', 'one more time'];
-const DONE_COMMANDS = ['done', 'ready', 'finished', "i'm done", 'added it', 'it\'s in'];
-const PAUSE_COMMANDS = ['pause', 'hold on', 'one sec', 'give me a minute', 'wait'];
-const RESUME_COMMANDS = ['resume', 'continue timer', 'keep going'];
-const END_COMMANDS = ['thanks chef', 'we\'re done', 'end session'];
+const NEXT_STEP_COMMANDS = ["next", "next step", "continue", "go on", "ready", "done", "finished"];
+const REPEAT_STEP_COMMANDS = ["repeat", "say again", "one more time"]; 
+const PAUSE_COMMANDS = ["pause", "hold on", "one sec", "wait"]; 
+const RESUME_COMMANDS = ["resume", "continue", "okay go", "go ahead"]; 
+const END_COMMANDS = ["thanks chef", "we're done", "we are done", "end session"]; 
 
-function extractDurationMs(text) {
-  // Very simple duration extractor: "10 minutes", "1 min", "2 hours"
-  const m = text.toLowerCase().match(/(\d+\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?))/);
-  if (!m) return null;
-  const seg = m[1];
-  const num = parseInt(seg);
-  if (isNaN(num)) return null;
-  if (/hour|hr/.test(seg)) return num * 60 * 60 * 1000;
-  if (/minute|min/.test(seg)) return num * 60 * 1000;
-  if (/second|sec/.test(seg)) return num * 1000;
-  return null;
-}
-
-function classifyStep(text) {
-  const lower = text.toLowerCase();
-  const durationMs = extractDurationMs(lower);
-  if (durationMs) return { stepType: 'duration', expectedDurationMs: durationMs };
-  // Action heuristics: leading verbs
-  const actionVerbs = ['add', 'mix', 'whisk', 'stir', 'chop', 'slice', 'preheat', 'bake', 'boil', 'simmer', 'pour', 'knead', 'season'];
-  if (actionVerbs.some(v => lower.startsWith(v + ' ') || lower.includes(` ${v} `))) {
-    return { stepType: 'action', expectedDurationMs: null };
-  }
-  return { stepType: 'info', expectedDurationMs: null };
-}
+const DURATION_REGEX = /(\d+)\s*(minutes?|mins?|seconds?|secs?)\b/i;
 
 export function useStepMode(onSendUserMessage) {
   const [isRecipeMode, setIsRecipeMode] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [recipeSteps, setRecipeSteps] = useState([]); // {text, stepType, expectedDurationMs}
-  const [waitingForNext, setWaitingForNext] = useState(false); // legacy
-  const [waitingForConfirm, setWaitingForConfirm] = useState(false);
+  const [recipeSteps, setRecipeSteps] = useState([]);
+  const [waitingForNext, setWaitingForNext] = useState(false);
   const [lastAssistantMessage, setLastAssistantMessage] = useState('');
-  const [timerEndsAt, setTimerEndsAt] = useState(null); // ms epoch
+
+  // New state for waiting mode and timers
+  const [waitingForConfirm, setWaitingForConfirm] = useState(false);
+  const [stepType, setStepType] = useState('info'); // 'action' | 'duration' | 'info'
+  const [expectedDurationMs, setExpectedDurationMs] = useState(null);
+  const [startedAtMs, setStartedAtMs] = useState(null);
+  const [isPaused, setIsPaused] = useState(false);
   const timerRef = useRef(null);
-  const [paused, setPaused] = useState(false);
 
   const isRecipePrompt = useCallback((message) => {
     return RECIPE_MODE_PHRASES.some(phrase => message.toLowerCase().includes(phrase));
   }, []);
 
+  // Classify step and extract timing
+  const classifyStep = useCallback((text) => {
+    if (!text) return { type: 'info', durationMs: null };
+    const durationMatch = text.match(DURATION_REGEX);
+    if (durationMatch) {
+      const amount = parseInt(durationMatch[1], 10);
+      const unit = durationMatch[2].toLowerCase();
+      const ms = unit.startsWith('sec') ? amount * 1000 : amount * 60 * 1000;
+      return { type: 'duration', durationMs: ms };
+    }
+    // Very simple heuristic: imperative verb at start implies action
+    if (/^(add|mix|stir|whisk|knead|chop|dice|slice|preheat|simmer|boil|bake|fold|pour|season|salt|pepper)\b/i.test(text)) {
+      return { type: 'action', durationMs: null };
+    }
+    return { type: 'info', durationMs: null };
+  }, []);
+
   const parseAssistantReply = useCallback((reply) => {
-    // Return first sentence as a candidate step
     const sentences = reply.split(/\.\s*|\!\s*|\?\s*/).filter(s => s.trim() !== '');
     if (sentences.length > 0) {
-      const stepText = sentences[0].trim();
-      const { stepType, expectedDurationMs } = classifyStep(stepText);
-      return { isStep: true, stepContent: stepText, stepType, expectedDurationMs };
+      return { isStep: true, stepContent: sentences[0].trim() };
     }
     return { isStep: false, stepContent: reply };
   }, []);
 
-  const clearTimer = () => {
+  const clearTimer = useCallback(() => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    setTimerEndsAt(null);
-    setPaused(false);
-  };
+  }, []);
 
-  const startTimer = (ms) => {
+  const startTimer = useCallback((ms) => {
     clearTimer();
-    const endAt = Date.now() + ms;
-    setTimerEndsAt(endAt);
-    timerRef.current = setTimeout(() => {
-      // Auto-nudge when timer completes
-      if (onSendUserMessage) {
-        onSendUserMessage('Timer finished. Ready for the next step?');
-      }
-      setWaitingForConfirm(true);
-      clearTimer();
-    }, ms);
-  };
+    setStartedAtMs(Date.now());
+    setIsPaused(false);
+    if (ms && ms > 0) {
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setWaitingForConfirm(true); // prompt to proceed
+        onSendUserMessage("Timer finished. Are you ready for the next step?");
+      }, ms);
+    }
+  }, [clearTimer, onSendUserMessage]);
 
   const handleAssistantReply = useCallback((reply) => {
     setLastAssistantMessage(reply);
 
-    const { isStep, stepContent, stepType, expectedDurationMs } = parseAssistantReply(reply);
-    if (!isStep) return;
-
-    const stepObj = { text: stepContent, stepType, expectedDurationMs: expectedDurationMs || null };
-
-    if (!isRecipeMode) {
+    const { isStep, stepContent } = parseAssistantReply(reply);
+    if (!isRecipeMode && isRecipePrompt(reply)) {
       setIsRecipeMode(true);
       setCurrentStepIndex(0);
-      setRecipeSteps([stepObj]);
-    } else {
-      setRecipeSteps(prev => [...prev, stepObj]);
-      setCurrentStepIndex(prev => prev + 1);
+      setRecipeSteps([]);
     }
 
-    setWaitingForNext(true); // legacy for external UI
+    if (isStep) {
+      setRecipeSteps(prev => [...prev, stepContent]);
+      setWaitingForNext(true);
 
-    if (stepType === 'action') {
-      clearTimer();
-      setWaitingForConfirm(true);
-    } else if (stepType === 'duration' && stepObj.expectedDurationMs) {
-      setWaitingForConfirm(false);
-      startTimer(stepObj.expectedDurationMs);
-    } else {
-      setWaitingForConfirm(false);
-      clearTimer();
+      // classify and set waiting mode / timer
+      const { type, durationMs } = classifyStep(stepContent);
+      setStepType(type);
+      setExpectedDurationMs(durationMs);
+
+      if (type === 'action') {
+        setWaitingForConfirm(true);
+        clearTimer();
+        setStartedAtMs(Date.now());
+      } else if (type === 'duration') {
+        setWaitingForConfirm(false);
+        startTimer(durationMs);
+      } else {
+        setWaitingForConfirm(false);
+        clearTimer();
+      }
     }
-  }, [isRecipeMode, parseAssistantReply]);
+  }, [isRecipeMode, isRecipePrompt, parseAssistantReply, classifyStep, startTimer, clearTimer]);
 
   const processUserCommand = useCallback((command) => {
     const lower = command.toLowerCase();
 
-    if (END_COMMANDS.some(cmd => lower.includes(cmd))) {
-      clearTimer();
-      setIsRecipeMode(false);
-      setWaitingForConfirm(false);
-      setWaitingForNext(false);
+    if (END_COMMANDS.some(k => lower.includes(k))) {
+      // Let caller decide how to end; we just acknowledge here
+      onSendUserMessage("Ending session. Thanks, chef.");
       return true;
     }
 
     if (REPEAT_STEP_COMMANDS.some(cmd => lower.includes(cmd))) {
-      if (lastAssistantMessage && onSendUserMessage) {
-        onSendUserMessage('Could you please repeat that?');
+      if (lastAssistantMessage) {
+        onSendUserMessage("Could you please repeat that?");
         return true;
       }
     }
 
     if (PAUSE_COMMANDS.some(cmd => lower.includes(cmd))) {
-      if (timerEndsAt) {
-        // Pause timer
-        const msLeft = Math.max(0, timerEndsAt - Date.now());
-        clearTimer();
-        setTimerEndsAt(Date.now() + msLeft); // store remaining in state
-        setPaused(true);
-      }
-      setWaitingForConfirm(true);
+      setIsPaused(true);
+      clearTimer();
+      onSendUserMessage("Pausing. Say 'resume' when you're ready.");
       return true;
     }
 
     if (RESUME_COMMANDS.some(cmd => lower.includes(cmd))) {
-      if (paused && timerEndsAt) {
-        const msLeft = Math.max(0, timerEndsAt - Date.now());
-        startTimer(msLeft);
-        setPaused(false);
-        setWaitingForConfirm(false);
+      if (stepType === 'duration' && expectedDurationMs && startedAtMs) {
+        // Resume remaining time (simple approach: restart full timer)
+        startTimer(expectedDurationMs);
       }
+      setIsPaused(false);
       return true;
     }
 
-    if (DONE_COMMANDS.some(cmd => lower.includes(cmd)) || NEXT_STEP_COMMANDS.some(cmd => lower.includes(cmd))) {
-      clearTimer();
+    // Proceed intents while waiting
+    if ((waitingForNext || waitingForConfirm) && NEXT_STEP_COMMANDS.some(cmd => lower.includes(cmd))) {
+      const nextIndex = currentStepIndex + 1;
       setWaitingForConfirm(false);
-      setWaitingForNext(false);
-      if (onSendUserMessage) {
+      setIsPaused(false);
+      clearTimer();
+
+      if (nextIndex < recipeSteps.length) {
+        setCurrentStepIndex(nextIndex);
+        setWaitingForNext(false);
+        onSendUserMessage("OK, next step.");
+        return true;
+      } else if (isRecipeMode) {
         onSendUserMessage("What's the next step?");
+        setWaitingForNext(false);
+        return true;
       }
-      return true;
     }
 
     return false;
-  }, [lastAssistantMessage, onSendUserMessage, timerEndsAt, paused]);
+  }, [END_COMMANDS, REPEAT_STEP_COMMANDS, PAUSE_COMMANDS, RESUME_COMMANDS, waitingForNext, waitingForConfirm, currentStepIndex, recipeSteps.length, isRecipeMode, lastAssistantMessage, onSendUserMessage, stepType, expectedDurationMs, startedAtMs, clearTimer, startTimer]);
 
-  const seedRecipe = useCallback((recipe) => {
-    // recipe: { title, ingredients: string[], steps: [{ step, instruction, estimated_time_min? }], meta? }
-    if (!recipe || !Array.isArray(recipe.steps)) return;
-    const steps = recipe.steps.map(s => {
-      const text = s.instruction || String(s.step) + '. ' + (s.text || '');
-      const ms = s.estimated_time_min ? s.estimated_time_min * 60 * 1000 : extractDurationMs(text) || null;
-      const cls = ms ? { stepType: 'duration', expectedDurationMs: ms } : classifyStep(text);
-      return { text, stepType: cls.stepType, expectedDurationMs: cls.expectedDurationMs || null };
-    });
-    setIsRecipeMode(true);
-    setCurrentStepIndex(0);
-    setRecipeSteps(steps);
-    setWaitingForConfirm(steps[0]?.stepType === 'action');
-    if (steps[0]?.stepType === 'duration' && steps[0]?.expectedDurationMs) startTimer(steps[0].expectedDurationMs);
-  }, []);
-
-  useEffect(() => () => clearTimer(), []);
+  useEffect(() => () => clearTimer(), [clearTimer]);
 
   return {
     isRecipeMode,
-    currentStep: recipeSteps[currentStepIndex]?.text,
+    currentStep: recipeSteps[currentStepIndex],
     currentStepIndex,
     totalSteps: recipeSteps.length,
     waitingForNext,
     waitingForConfirm,
-    paused,
-    timerEndsAt,
+    stepType,
+    expectedDurationMs,
+    startedAtMs,
+    isPaused,
     handleAssistantReply,
     processUserCommand,
     setCurrentStepIndex,
     setIsRecipeMode,
-    seedRecipe,
   };
 } 

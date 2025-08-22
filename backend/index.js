@@ -8,7 +8,7 @@ const multer = require('multer'); // New import
 const { getRelevantTips } = require('./getRelevantTips');
 const axios = require('axios'); // New import
 const FormData = require('form-data'); // New import
-const cheerio = require('cheerio'); // New import
+const { buildStructuredIngredients, parseIngredientLine, scaleIngredient, convertIngredient, formatAmount } = require('./recipeMath');
 
 dotenv.config();
 
@@ -21,6 +21,51 @@ app.use(cors({
 
 app.use(express.json());
 
+// Helper: remove emojis and variation selectors
+function stripEmojis(text) {
+  if (!text) return text;
+  // Remove most emoji ranges + variation selectors + skin tones
+  return text
+    .replace(/[\u2700-\u27BF]/g, '')
+    .replace(/[\uE000-\uF8FF]/g, '')
+    .replace(/[\uD83C-\uDBFF][\uDC00-\uDFFF]/g, '')
+    .replace(/[\uFE0F\uFE0E]/g, '')
+    .replace(/[\u200D]/g, '');
+}
+
+// Build a system prompt using conversation state
+function buildSystemPrompt(state = {}) {
+  const { stepType = 'passive', stepStatus = 'awaiting_start', recipeLocked = false } = state;
+  return (
+    `You are a hands-free cooking assistant.
+Never suggest starting a new task while the current step is a “focus” task (hands required).
+Only suggest concurrent tasks during “passive” steps (waiting for water to boil, dough to rise, baking, simmering).
+Wait for explicit confirmation before giving the next step.
+If silence occurs, do not end the session — instead, check in periodically.
+When following a specific recipe, keep the ingredient list exactly as provided without changes.
+Current step type: ${stepType}. Current step status: ${stepStatus}.
+Always keep responses concise for voice.`
+  );
+}
+
+// Enforce ingredient lock by appending a constraint note
+function enforceIngredientLock(userText = '', state = {}) {
+  const { recipeLocked = false, lockedIngredients = [] } = state;
+  if (!recipeLocked || !Array.isArray(lockedIngredients) || lockedIngredients.length === 0) return userText;
+  const lockedList = lockedIngredients.map(s => `- ${s}`).join('\n');
+  const note = `\n\nConstraints: Ingredients are locked. Use exactly this list with no substitutions or added items.\n${lockedList}`;
+  return `${userText}${note}`;
+}
+
+// Compute a suggested check-in time (ms) at ~75% of the step duration if provided
+function computeCheckIn(state = {}) {
+  const { stepStatus = 'awaiting_start', estimatedMs } = state;
+  if (stepStatus !== 'in_progress') return null;
+  const duration = typeof estimatedMs === 'number' && estimatedMs > 0 ? estimatedMs : 0;
+  if (!duration) return null;
+  return Math.floor(duration * 0.75);
+}
+
 // Configure multer for file uploads (audio for Whisper)
 const upload = multer({ dest: 'uploads/' });
 
@@ -31,101 +76,13 @@ const openai = new OpenAI({
 // Load cooking tips knowledge base once at startup
 const cookingTips = JSON.parse(fs.readFileSync(path.join(__dirname, 'cookingTips.json'), 'utf8'));
 
-// Simple in-memory LRU-ish cache for ingested URLs
-const urlCache = new Map();
-function cacheGet(url) {
-  const item = urlCache.get(url);
-  if (!item) return null;
-  return item;
-}
-function cacheSet(url, value) {
-  urlCache.set(url, value);
-  if (urlCache.size > 50) {
-    // remove oldest
-    const firstKey = urlCache.keys().next().value;
-    urlCache.delete(firstKey);
-  }
-}
-
-function isoDurationToMinutes(iso) {
-  if (!iso) return null;
-  // Parse simple ISO8601 duration like PT1H30M, PT45M
-  const m = String(iso).match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)$/i);
-  if (!m) return null;
-  const hours = parseInt(m[1] || '0', 10);
-  const minutes = parseInt(m[2] || '0', 10);
-  const seconds = parseInt(m[3] || '0', 10);
-  return hours * 60 + minutes + Math.round(seconds / 60);
-}
-
-function normalizeRecipeFromLd(ld, url) {
-  try {
-    const data = Array.isArray(ld) ? ld : [ld];
-    const recipe = data.find((node) => {
-      const type = node['@type'];
-      return type && (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe')));
-    });
-    if (!recipe) return null;
-
-    const title = recipe.name || 'Untitled Recipe';
-    const ingredients = Array.isArray(recipe.recipeIngredient) ? recipe.recipeIngredient : [];
-
-    let steps = [];
-    if (Array.isArray(recipe.recipeInstructions)) {
-      steps = recipe.recipeInstructions.map((s, idx) => {
-        if (typeof s === 'string') return { step: idx + 1, instruction: s, estimated_time_min: null };
-        const text = s.text || s.name || '';
-        const est = isoDurationToMinutes(s.totalTime || s.prepTime || s.cookTime || recipe.totalTime);
-        return { step: idx + 1, instruction: text, estimated_time_min: est || null };
-      });
-    } else if (typeof recipe.recipeInstructions === 'string') {
-      const lines = recipe.recipeInstructions.split(/\n+/).filter(Boolean);
-      steps = lines.map((line, i) => ({ step: i + 1, instruction: line.trim(), estimated_time_min: null }));
-    }
-
-    const totalMinutes = isoDurationToMinutes(recipe.totalTime) || null;
-
-    return {
-      title,
-      ingredients,
-      steps,
-      meta: {
-        url,
-        siteName: new URL(url).hostname.replace('www.', ''),
-        image: recipe.image && (Array.isArray(recipe.image) ? recipe.image[0] : recipe.image),
-        author: recipe.author && (typeof recipe.author === 'string' ? recipe.author : recipe.author?.name),
-        totalMinutes,
-      }
-    };
-  } catch (e) {
-    return null;
-  }
-}
-
-async function parseRecipeWithLLM(rawText) {
-  const prompt = `Extract the following recipe into JSON with this format:\n{\n  "title": string,\n  "ingredients": [string],\n  "steps": [ { "step": number, "instruction": string, "estimated_time_min": number } ]\n}\nRecipe:\n${rawText}\nReturn only valid JSON.`;
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-3.5-turbo',
-    messages: [
-      { role: 'system', content: 'You are a sous chef recipe parser.' },
-      { role: 'user', content: prompt }
-    ],
-    max_tokens: 600,
-    temperature: 0,
-  });
-  const text = completion.choices?.[0]?.message?.content || '';
-  let recipeJson = null;
-  try {
-    recipeJson = JSON.parse(text);
-  } catch (err) {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) recipeJson = JSON.parse(match[0]);
-  }
-  if (!recipeJson || !recipeJson.title || !recipeJson.ingredients || !recipeJson.steps) {
-    throw new Error('Could not parse recipe.');
-  }
-  return recipeJson;
-}
+// In-memory simple session (single user) state for demo
+const recipeSession = {
+  base: null, // { title, ingredients: [string], steps: [...] }
+  structuredIngredients: null, // parsed array
+  scale: 1,
+  unitSystem: 'imperial', // 'imperial' | 'metric'
+};
 
 app.get('/api/test', async (req, res) => {
   console.log('🔁 FE → BE connection working');
@@ -147,26 +104,31 @@ app.get('/api/test', async (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, lastUserMessage } = req.body;
+    const { messages, lastUserMessage, state: clientState = {} } = req.body;
 
     // Validate messages array
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Invalid message format - expected messages array' });
     }
 
-    // Use the messages as-is from frontend (which now always includes system prompt)
-    const fullConversation = messages;
+    // Clone messages and optionally enforce ingredient lock on the latest user message
+    const fullConversation = [...messages];
+    const lastIdx = [...fullConversation].map((m,i)=>({i,m})).filter(x=> (x.m.role === 'user')).map(x=>x.i).pop();
+    if (typeof lastIdx === 'number' && lastIdx >= 0) {
+      const m = fullConversation[lastIdx];
+      const lockedContent = enforceIngredientLock(m.content || m.text || '', clientState);
+      fullConversation[lastIdx] = { ...m, content: lockedContent };
+    }
 
-    // Clean up message format - map any non-standard roles
-    const cleanedMessages = fullConversation.map(msg => ({
+    // Prepend system message with rules based on state
+    const sys = { role: 'system', content: buildSystemPrompt(clientState) };
+    const withSystem = [sys, ...fullConversation];
+
+    // Clean up format for OpenAI
+    const cleanedMessages = withSystem.map(msg => ({
       role: msg.role === 'agent' ? 'assistant' : msg.role,
-      content: msg.content || msg.text || '' // Handle both content and text fields
+      content: msg.content || msg.text || ''
     }));
-
-    console.log('📥 Received from frontend:', messages.length, 'messages');
-    console.log('📥 Frontend messages:', messages.map(m => `${m.role}: ${(m.content || m.text || '').substring(0, 50)}...`));
-    console.log('🤖 Sending to GPT:', cleanedMessages.length, 'messages');
-    console.log('🤖 Final GPT messages:', cleanedMessages.map(m => `${m.role}: ${m.content.substring(0, 50)}...`));
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
@@ -175,14 +137,118 @@ app.post('/api/chat', async (req, res) => {
       max_tokens: 150 // Keep responses concise for voice
     });
 
-    const reply = completion.choices[0].message.content;
-    console.log('✅ GPT reply:', reply);
+    let reply = completion.choices[0].message.content || '';
+    reply = stripEmojis(reply).trim();
 
-    res.json({ reply });
+    // Action hints for the client (music/check-in)
+    const checkInAtMs = computeCheckIn(clientState); // null if N/A
+    const actions = {};
+    const { stepType = 'passive', stepStatus = 'awaiting_start', musicGenre = 'lofi' } = clientState;
+    if (stepStatus === 'awaiting_start' || stepStatus === 'in_progress') {
+      actions.playMusic = true;
+      actions.musicGenre = musicGenre;
+    }
+    if (checkInAtMs) actions.checkInAtMs = checkInAtMs;
+
+    res.json({ reply, actions });
 
   } catch (error) {
     console.error('❌ Chat error:', error);
     res.status(500).json({ error: 'Failed to get response from GPT' });
+  }
+});
+
+// Initialize recipe state from parsed recipe JSON or raw text
+app.post('/api/recipe/init', async (req, res) => {
+  try {
+    const { recipe, isParsed } = req.body;
+    if (!recipe) {
+      return res.status(400).json({ error: 'Missing recipe' });
+    }
+
+    let recipeJson = null;
+    if (isParsed) {
+      recipeJson = recipe;
+    } else if (typeof recipe === 'string') {
+      // Optionally parse via LLM if string provided
+      const prompt = `Extract the following recipe into JSON with this format:\n{\n  "title": string,\n  "ingredients": [string],\n  "steps": [ { "step": number, "instruction": string } ]\n}\nRecipe:\n${recipe}\nReturn only valid JSON.`;
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          { role: 'system', content: 'You are a sous chef recipe parser.' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 600,
+        temperature: 0,
+      });
+      const text = completion.choices?.[0]?.message?.content;
+      recipeJson = JSON.parse(text);
+    } else {
+      return res.status(400).json({ error: 'Invalid recipe format' });
+    }
+
+    if (!recipeJson?.ingredients || !Array.isArray(recipeJson.ingredients)) {
+      return res.status(422).json({ error: 'Recipe missing ingredients array' });
+    }
+
+    recipeSession.base = recipeJson;
+    recipeSession.scale = 1;
+    recipeSession.unitSystem = 'imperial';
+    recipeSession.structuredIngredients = buildStructuredIngredients(recipeJson.ingredients);
+
+    res.json({ status: 'ok', title: recipeJson.title || null, totalIngredients: recipeSession.structuredIngredients.length });
+  } catch (error) {
+    console.error('[recipe/init] error', error);
+    res.status(500).json({ error: 'Failed to init recipe' });
+  }
+});
+
+// Apply actions: scale or convert units
+app.post('/api/recipe/apply', (req, res) => {
+  try {
+    const { action } = req.body;
+    if (!recipeSession.base) return res.status(400).json({ error: 'No active recipe' });
+    if (!action || !action.type) return res.status(400).json({ error: 'Missing action' });
+
+    if (action.type === 'scale') {
+      const factor = Number(action.factor);
+      if (!factor || factor <= 0) return res.status(400).json({ error: 'Invalid scale factor' });
+      recipeSession.scale = factor;
+      return res.json({ status: 'ok', scale: recipeSession.scale });
+    }
+
+    if (action.type === 'convert_units') {
+      const target = action.target === 'metric' ? 'metric' : 'imperial';
+      recipeSession.unitSystem = target;
+      return res.json({ status: 'ok', unitSystem: recipeSession.unitSystem });
+    }
+
+    return res.status(400).json({ error: 'Unknown action type' });
+  } catch (error) {
+    console.error('[recipe/apply] error', error);
+    res.status(500).json({ error: 'Failed to apply action' });
+  }
+});
+
+// Get the current amount for a specific ingredient name
+app.get('/api/recipe/ingredient', (req, res) => {
+  try {
+    const { name } = req.query;
+    if (!recipeSession.base) return res.status(400).json({ error: 'No active recipe' });
+    if (!name) return res.status(400).json({ error: 'Missing ingredient name' });
+
+    const ing = recipeSession.structuredIngredients.find(i => i.name.includes(String(name).toLowerCase()));
+    if (!ing) return res.status(404).json({ error: 'Ingredient not found' });
+
+    // Scale and convert
+    const scaled = scaleIngredient(ing, recipeSession.scale || 1);
+    const converted = convertIngredient(scaled, recipeSession.unitSystem || 'imperial');
+    const formatted = formatAmount(converted);
+
+    res.json({ status: 'ok', ingredient: converted, text: formatted, scale: recipeSession.scale, unitSystem: recipeSession.unitSystem });
+  } catch (error) {
+    console.error('[recipe/ingredient] error', error);
+    res.status(500).json({ error: 'Failed to get ingredient' });
   }
 });
 
@@ -224,58 +290,6 @@ app.post('/api/parse-recipe', async (req, res) => {
   } catch (error) {
     console.error('[SousChefParse] Error parsing recipe:', error);
     res.status(500).json({ status: 'error', message: error.message || 'Unknown error.' });
-  }
-});
-
-app.post('/api/ingest-recipe-url', async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url || typeof url !== 'string') {
-      return res.status(400).json({ status: 'error', message: 'No URL provided.' });
-    }
-    const normalized = url.trim();
-
-    const cached = cacheGet(normalized);
-    if (cached) {
-      return res.json({ status: 'ok', recipe: cached });
-    }
-
-    const response = await axios.get(normalized, {
-      timeout: 12000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-    const html = response.data;
-    const $ = cheerio.load(html);
-
-    // Try JSON-LD
-    let parsed = null;
-    $('script[type="application/ld+json"]').each((_, el) => {
-      if (parsed) return;
-      try {
-        const json = JSON.parse($(el).contents().text());
-        const norm = normalizeRecipeFromLd(json, normalized);
-        if (norm && norm.steps && norm.steps.length > 0) parsed = norm;
-      } catch {}
-    });
-
-    // Fallback to LLM-based parsing
-    if (!parsed) {
-      const articleText = $('article').text().trim() || $('main').text().trim() || $('body').text().trim();
-      const truncated = articleText.replace(/\s+/g, ' ').slice(0, 12000);
-      parsed = await parseRecipeWithLLM(truncated);
-      parsed.meta = parsed.meta || {};
-      parsed.meta.url = normalized;
-      parsed.meta.siteName = new URL(normalized).hostname.replace('www.', '');
-    }
-
-    cacheSet(normalized, parsed);
-    res.json({ status: 'ok', recipe: parsed });
-  } catch (error) {
-    console.error('[IngestURL] Error:', error?.response?.status, error?.message);
-    res.status(500).json({ status: 'error', message: error.message || 'Ingest failed' });
   }
 });
 

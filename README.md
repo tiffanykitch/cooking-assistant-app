@@ -71,20 +71,20 @@ cd frontend && npm install
 
 ### 3) Configure environment
 Create `backend/.env` with:
-```
-OPENAI_API_KEY=sk-...
-```
+  ```
+  OPENAI_API_KEY=sk-...
+  ```
 
 ### 4) Run
 - Backend (port 3000):
-```bash
+  ```bash
 node backend/index.js
-```
+  ```
 - Frontend (port 5173):
-```bash
-cd frontend
-npm run dev
-```
+  ```bash
+  cd frontend
+  npm run dev
+  ```
 Open `http://localhost:5173`.
 
 ---

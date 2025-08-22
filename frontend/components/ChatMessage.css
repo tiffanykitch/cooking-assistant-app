@@ -1,0 +1,47 @@
+/* Chat step card styles */
+.chat-step-card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.06);
+  padding: 12px 16px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 90%;
+}
+
+.chat-step-card.assistant { align-self: flex-start; }
+.chat-step-card.user { align-self: flex-end; background: #FFE5CC; }
+
+.step-instruction {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.step-sensory-cue {
+  font-style: italic;
+  color: #374151;
+  background-color: #f3f4f6;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.step-mic-button {
+  margin-top: 8px;
+  align-self: flex-start;
+  background-color: #4A6FFF;
+  border: none;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+
+.step-mic-button:hover { background-color: #3b5de7; } 

@@ -40,7 +40,7 @@ export function useVoiceFlow(onSpeechRecognized, onSpeechEnded) {
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
     recognition.interimResults = true;
-    recognition.continuous = continuous;
+    recognition.continuous = continuous; // Continuous lets us get more robust interim stream
 
     finalTranscriptRef.current = '';
     interimTranscriptRef.current = '';
@@ -61,11 +61,9 @@ export function useVoiceFlow(onSpeechRecognized, onSpeechEnded) {
           interimTranscriptRef.current += result[0].transcript;
         }
       }
-      // Call onSpeechRecognized with the current interim or final transcript
       if (onSpeechRecognized) {
         onSpeechRecognized(interimTranscriptRef.current || finalTranscriptRef.current);
       }
-      console.log('[VoiceFlow] Interim:', interimTranscriptRef.current, '| Final:', finalTranscriptRef.current);
     };
 
     recognition.onerror = (e) => {

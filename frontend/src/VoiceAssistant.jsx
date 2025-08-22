@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, ChefHat } from 'lucide-react';
+import { Mic, MicOff, ChefHat, Clock, Users, Speaker } from 'lucide-react';
 import RecipeMessage from './RecipeMessage';
 import VoiceStateBar from './components/VoiceStateBar.jsx';
 import VoiceMicButton from './components/VoiceMicButton.jsx';
@@ -27,6 +27,11 @@ IMPORTANT:
 - If the recipe comes from a known source and has strong reviews or ratings, mention that in the introduction to build user confidence. Highlight the source and the number or quality of reviews, if available (e.g., 'adapted from NYT Cooking — 4.8 stars with 2,000+ reviews'). Avoid links unless requested.
 - When introducing a recipe, always start by previewing it clearly and kindly: Name the recipe with an emoji, share the estimated total cooking time (rounded to the nearest 5 minutes), share how many steps it has, then say exactly: "Let me know if you're ready to start cooking or if you want a quick overview first!"
 
+DATA & ACCURACY:
+- Never invent or guess quantities, conversions, or scaled amounts.
+- Rely on the app-provided recipe state for amounts and units. If the state is missing a value, ask a concise clarifying question.
+- If the user requests scaling or unit conversion, say you'll apply it, then wait for the app to provide updated amounts.
+
 👩‍🍳 RECIPE FLOW LOGIC
 - Always maximize cooking efficiency. If one step takes time (e.g., pasta boiling, dough resting, oven preheating), use that downtime to guide the user through a different part of the recipe.
 - Example: While pasta is boiling, have the user start prepping or cooking the sauce — don't wait for the pasta to finish before starting the next component.
@@ -43,6 +48,8 @@ IMPORTANT:
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [textInput, setTextInput] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
 
   // NEW: WebAudio for silence end-pointer
   const audioContextRef = useRef(null);
@@ -68,7 +75,7 @@ IMPORTANT:
     },
     {
       question: 'What ingredients do I need for pad thai?',
-      answer: "Great choice! You'll need rice noodles, tamarind paste, fish sauce..."
+      answer: "Great choice! You'll need rice noodles, tamarind paste, fish sauce, eggs, and fresh herbs. I'll walk you through the prep and cooking process."
     },
     {
       question: 'How long should I knead bread dough?',
@@ -79,23 +86,30 @@ IMPORTANT:
   // Cycle through demo messages
   useEffect(() => {
     if (!hasStarted) {
-      // Show initial answer after a brief delay so the first demo has a visible response
-      const initialAnswerTimeout = setTimeout(() => {
-        setShowAnswer(true);
-      }, 1500);
+      // Show initial question after a brief delay
+      const initialQuestionTimeout = setTimeout(() => {
+        setDemoMessageIndex(0);
+        setTimeout(() => {
+          setShowAnswer(true);
+        }, 2000); // Wait 2 seconds after question appears
+      }, 1000);
 
       const interval = setInterval(() => {
+        // Hide both question and answer together
         setShowAnswer(false);
         setTimeout(() => {
+          // Change to next question and show it immediately
           setDemoMessageIndex((prev) => (prev + 1) % demoConversations.length);
           setTimeout(() => {
+            // Show answer for new question
             setShowAnswer(true);
-          }, 1500);
-        }, 500);
-      }, 4000);
+          }, 2000); // Wait 2 seconds after question appears
+        }, 1000); // Wait 1 second after hiding
+      }, 8000); // Total cycle: 8 seconds
+      
       return () => {
         clearInterval(interval);
-        clearTimeout(initialAnswerTimeout);
+        clearTimeout(initialQuestionTimeout);
       };
     }
   }, [hasStarted, demoConversations.length]);
@@ -227,7 +241,7 @@ IMPORTANT:
       };
 
       mediaRecorder.start();
-
+      
       // Fallback: hard stop at 10s to avoid getting stuck
       setTimeout(() => {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -290,8 +304,8 @@ IMPORTANT:
         console.warn('Filtered out non-English/gibberish transcription:', transcript);
         setIsProcessing(false);
         await startRecording(); // Loop back to listening
-        return;
-      }
+      return;
+    }
 
       // Intercept math/state intents before sending to LLM
       const lower = transcript.toLowerCase();
@@ -377,6 +391,32 @@ IMPORTANT:
     }
   };
 
+  const tryInitRecipeFromUserText = async (text) => {
+    // Heuristic: if user pasted a long text that looks like a recipe, initialize
+    const looksLikeRecipe = /ingredients?:|yield:|serves|instructions?:|preheat|oven|whisk|mix|bake/i.test(text) || text.split(/\n/).length >= 6;
+    if (!looksLikeRecipe) return false;
+    try {
+      setIsParsing(true);
+      const res = await fetch('/api/recipe/init', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipe: text, isParsed: false })
+      });
+      const json = await res.json();
+      if (json?.status === 'ok') {
+        const msg = `Got it. I loaded the recipe "${json.title || ''}". Ask me to scale or convert units anytime.`.trim();
+        setMessages(prev => [...prev, { role: 'assistant', content: msg }]);
+        await speakWithOpenAI(msg);
+        return true;
+      }
+    } catch (e) {
+      console.error('init recipe error', e);
+    } finally {
+      setIsParsing(false);
+    }
+    return false;
+  };
+
+  // Modify generateResponse to attempt initialization if the last user message looks like a recipe
   const generateResponse = async () => {
     if (isGeneratingRef.current) return;
     isGeneratingRef.current = true;
@@ -384,6 +424,17 @@ IMPORTANT:
 
     try {
       const lastUserMessage = messages[messages.length - 1];
+
+      // Try to initialize recipe if the user pasted one
+      if (lastUserMessage?.role === 'user') {
+        const inited = await tryInitRecipeFromUserText(lastUserMessage.content || '');
+        if (inited) {
+          // Re-arm listening and skip LLM call for this turn
+          await new Promise(r => setTimeout(r, 150));
+          await startRecording();
+          return;
+        }
+      }
 
       console.log("📤 Sending full history:", messages);
 
@@ -532,21 +583,15 @@ IMPORTANT:
   if (!hasStarted) {
     // Landing Screen
     return (
-      <div style={{
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-        minHeight: '100vh',
-        backgroundColor: '#fafafa',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+      <div className="hero">
         {/* Hero Section */}
-        <div style={{
+        <div className="container" style={{
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '48px 24px',
+          padding: '72px 24px',
           textAlign: 'center',
           maxWidth: '600px',
           margin: '0 auto'
@@ -558,227 +603,118 @@ IMPORTANT:
             gap: '12px',
             marginBottom: '32px'
           }}>
-            <ChefHat size={32} color="#007bff" />
+            <ChefHat size={32} color="#C6A664" />
             <h1 style={{
-              fontSize: '32px',
-              fontWeight: '700',
-              color: '#1a1a1a',
-              margin: 0
+              fontSize: '28px',
+              fontWeight: '800',
+              color: '#1f2937',
+              margin: 0,
+              letterSpacing: '-0.02em'
             }}>
               PrepTalk
             </h1>
           </div>
 
           {/* Main Headlines */}
-          <h2 style={{
-            fontSize: '42px',
-            fontWeight: '600',
-            color: '#1a1a1a',
-            margin: '0 0 16px 0',
-            lineHeight: '1.2'
-          }}>
-            Your hands-free cooking companion
-          </h2>
-
-          <p style={{
-            fontSize: '20px',
-            color: '#666666',
-            margin: '0 0 40px 0',
-            lineHeight: '1.5'
-          }}>
-            Get step-by-step recipe guidance while your hands are busy cooking
-          </p>
+          <div className="stack title-plate">
+            <h2 className="title" style={{ margin: '0 0 40px 0' }}>Your hands-free cooking companion</h2>
+            <p className="subtitle" style={{ margin: '0 0 80px 0' }}>Get recipes, steps, and tips while you cook — just talk.</p>
+          </div>
 
           {/* Demo Conversation Preview */}
-          <div style={{
-            backgroundColor: '#ffffff',
-            borderRadius: '16px',
-            padding: '24px',
-            marginBottom: '32px',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+          <div className="hero-preview" style={{
             minHeight: '140px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             width: '100%',
-            maxWidth: '450px'
+            maxWidth: '640px',
+            overflow: 'hidden',
+            padding: '24px 32px',
+            marginBottom: 60
           }}>
             <div style={{
               display: 'flex',
               flexDirection: 'column',
-              gap: '16px',
+              gap: '20px',
               width: '100%'
             }}>
-              {/* User Question */}
+              {/* Instructional badge */}
               <div style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                opacity: 1,
-                transition: 'opacity 0.3s ease'
+                alignSelf: 'center',
+                background: '#F4E4C1',
+                border: '1px solid #DAA520',
+                borderRadius: 9999,
+                padding: '8px 16px',
+                fontWeight: 600,
+                fontSize: 14,
+                marginBottom: 16
               }}>
-                <div style={{
-                  padding: '10px 14px',
-                  borderRadius: '14px',
-                  backgroundColor: '#007bff',
-                  color: '#ffffff',
-                  fontSize: '15px',
-                  maxWidth: '80%'
-                }}>
+                Try saying something like:
+              </div>
+              {/* User Question (preview using chat styles with icon) */}
+              <div className="chat-item user" style={{ margin: '8px 0 0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', width: '100%' }}>
+                <div className="chat-bubble" style={{ padding: '14px 18px', maxWidth: '78%', marginLeft: 'auto', marginRight: 0 }}>
                   {demoConversations[demoMessageIndex].question}
                 </div>
+                <span className="icon icon--user" style={{ marginLeft: 16, display: 'inline-flex', alignItems: 'center' }}>
+                  <Users size={24} />
+                </span>
               </div>
 
               {/* Assistant Answer */}
-              <div style={{
-                display: 'flex',
-                justifyContent: 'flex-start',
-                opacity: showAnswer ? 1 : 0,
-                transition: 'opacity 0.5s ease',
-                minHeight: '20px'
-              }}>
+              <div className="chat-item assistant" style={{ margin: '0 0 8px', opacity: showAnswer ? 1 : 0, transition: 'opacity 0.5s ease', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', width: '100%' }}>
                 {showAnswer && (
-                  <div style={{
-                    padding: '10px 14px',
-                    borderRadius: '14px',
-                    backgroundColor: '#f1f3f4',
-                    color: '#1a1a1a',
-                    fontSize: '15px',
-                    maxWidth: '80%'
-                  }}>
+                  <>
+                    <span className="icon icon--chef" style={{ marginLeft: 0, marginRight: 16, display: 'inline-flex', alignItems: 'center' }}>
+                      <ChefHat size={24} />
+                    </span>
+                    <div className="chat-bubble" style={{ padding: '14px 18px', maxWidth: '86%', marginLeft: 0, marginRight: 'auto' }}>
                     {demoConversations[demoMessageIndex].answer}
                   </div>
+                  </>
                 )}
-              </div>
-
-              <div style={{
-                textAlign: 'center',
-                fontSize: '12px',
-                color: '#999999',
-                marginTop: '8px'
-              }}>
-                Try saying something like this...
               </div>
             </div>
           </div>
 
           {/* Main CTA */}
+          <div style={{ width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <button
             onClick={handleMicClick}
-            style={{
-              width: '80px',
-              height: '80px',
-              borderRadius: '50%',
-              border: 'none',
-              backgroundColor: '#007bff',
-              color: '#ffffff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transform: 'scale(1)',
-              transition: 'all 0.3s ease',
-              boxShadow: '0 8px 24px rgba(0, 123, 255, 0.3)',
-              marginBottom: '16px'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.transform = 'scale(1.05)';
-              e.currentTarget.style.boxShadow = '0 12px 28px rgba(0, 123, 255, 0.4)';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 123, 255, 0.3)';
-            }}
+              className="cta-mic"
             aria-label="Start listening"
           >
             <Mic size={28} />
+              <div className="waves" aria-hidden="true"><i></i><i></i><i></i></div>
           </button>
-
-          <p style={{
-            fontSize: '16px',
-            color: '#007bff',
-            fontWeight: '500',
-            margin: '0 0 32px 0'
-          }}>
-            Tap to start cooking
-          </p>
-
-          {/* Try Examples */}
-          <div style={{ marginBottom: '8px' }}>
-            <p style={{
-              fontSize: '14px',
-              color: '#666666',
-              marginBottom: '12px'
-            }}>
-              Try saying:
-            </p>
-            <div style={{
-              display: 'flex',
-              gap: '8px',
-              flexWrap: 'wrap',
-              justifyContent: 'center'
-            }}>
-              {[
-                "How do I make risotto?",
-                "What's for dinner tonight?",
-                "Guide me through bread baking"
-              ].map((example, index) => (
-                <div key={index} style={{
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e0e0e0',
-                  borderRadius: '20px',
-                  padding: '6px 12px',
-                  fontSize: '13px',
-                  color: '#666666'
-                }}>
-                  "{example}"
-                </div>
-              ))}
-            </div>
           </div>
 
-          <p style={{
-            fontSize: '13px',
-            color: '#999999',
-            margin: 0
-          }}>
-            Say "thanks chef" to end anytime
-          </p>
+          <p className="cta-copy" style={{ marginTop: 40 }}>Tap to start cooking</p>
+
         </div>
 
-        {/* Social Proof Section removed */}
+        
       </div>
     );
   }
 
   // Main chat UI
   return (
-    <div style={{
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    <div className="light-chat" style={{
+      fontFamily: 'Inter, sans-serif',
       height: '100vh',
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: '#ffffff'
+      background: 'linear-gradient(180deg, #f4cea6 0%, #e7a869 100%)',
+      color: '#1a1a1a'
     }}>
       {/* Header */}
-      <header style={{
-        padding: '20px 24px',
-        borderBottom: '1px solid #e5e5e5'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <ChefHat size={24} color="#1a1a1a" />
-          <h1 style={{ fontSize: '20px', fontWeight: '600', color: '#1a1a1a' }}>PrepTalk</h1>
-        </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}>
-          <Mic size={24} color="#666" />
-          <div style={{
-            fontSize: '14px',
-            color: isListening ? '#007bff' : '#666'
-          }}>
-            {isProcessing ? 'Thinking...' : (isListening ? 'Listening...' : 'Speaking...')}
+      <header style={{ padding: 0, borderBottom: '1px solid var(--color-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <ChefHat size={22} color="var(--color-text)" />
+            <h1 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text)' }}>PrepTalk</h1>
           </div>
         </div>
       </header>
@@ -792,81 +728,83 @@ IMPORTANT:
         flexDirection: 'column',
         gap: '16px'
       }}>
-        {/* Step summary (basic) */}
-        {messages.length > 1 && messages[messages.length - 1].role === 'assistant' && (
-          <StepCard
-            title={null}
-            stepText={messages[messages.length - 1].content}
-            stepIndex={0}
-            totalSteps={1}
-            status={'info'}
-            etaMs={null}
-            startedAtMs={null}
-          />
+        {/* Onboarding hint */}
+        {messages.filter(m=>m.role!=='system').length === 0 && !isListening && !isProcessing && !isSpeaking && (
+          <div className="onboarding-hint">
+            Say “What should I make with chicken?” or “Start a 10‑minute timer”
+          </div>
         )}
+        {/* Step card removed for a cleaner chat-first flow */}
         {/* Messages */}
-        {messages.map((message, index) => (
+        {/* compute last assistant index inline by mapping twice isn't efficient; using local var */}
+        {(() => {
+          const lastAssistantIndex = [...messages].map((m,i)=>({m,i})).filter(x=>x.m.role==='assistant').map(x=>x.i).pop();
+          return messages.map((message, index) => (
           message.role !== 'system' && (
-            <div
-              key={index}
-              style={{
-                display: 'flex',
-                justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-                marginBottom: '12px',
-                animation: 'slideIn 0.3s ease-out'
-              }}
-            >
-            <div style={{
-              fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-              fontSize: '1.2rem',
-              lineHeight: 1.5,
-              maxWidth: '70%',
-              padding: '12px 16px',
-              borderRadius: '16px',
-              wordWrap: 'break-word',
-              whiteSpace: 'pre-line',
-              backgroundColor: message.role === 'user' ? '#dcf8c6' : '#f0f4f8',
-              color: message.role === 'user' ? '#202020' : '#2c3e50',
-              alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start'
-            }}>
-              {message.role === 'user' ? (
-                message.content
-              ) : (
-                <RecipeMessage markdownText={message.content} />
+              <div key={index} className={`msg-row ${message.role === 'user' ? 'user' : 'assistant'}`}>
+                {message.role !== 'user' && (
+                  <span className="icon icon--chef" aria-hidden="true" style={{marginRight:12, display:'inline-flex', alignItems:'center'}}>
+                    <ChefHat size={24} />
+                  </span>
+                )}
+                <div className={`bubble ${message.role === 'user' ? 'user' : 'assistant'}`}>
+                  {message.role === 'user' ? message.content : <RecipeMessage markdownText={message.content} />}
+                </div>
+                {message.role === 'user' && (
+                  <span className="icon icon--user" aria-hidden="true" style={{marginLeft:12, display:'inline-flex', alignItems:'center'}}>
+                    <Users size={24} />
+                  </span>
               )}
             </div>
+            )
+          ));
+        })()}
+
+        {/* Real-time user transcription bubble while listening */}
+        {isListening && interimTranscript && (
+          <div className="msg-row user">
+            <div className="bubble user transcribing">{interimTranscript}</div>
           </div>
-          )
-        ))}
+        )}
+
+        {/* Typing / processing indicator */}
+        {isProcessing && (
+          <div className="msg-row assistant">
+            <div className="typing-indicator"><span/><span/><span/></div>
+          </div>
+        )}
         {/* Auto-scroll target */}
         <div ref={messagesEndRef} />
       </main>
 
-      {/* Footer / Mic Button */}
-      <footer style={{
-        padding: '24px',
-        borderTop: '1px solid #e5e5e5'
-      }}>
+      {/* Voice Dock */}
+      <div className="voice-dock">
+        <div className="voice-status">
+          {isListening ? (
+            <span className="status listening" style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a' }}>Listening…</span>
+          ) : isProcessing ? (
+            <span className="status thinking" style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a' }}>Chef is responding…</span>
+          ) : isSpeaking ? (
+            <span className="status speaking" style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a' }}>Chef is speaking…</span>
+          ) : (
+            <span className="status idle" style={{ fontSize: '16px', fontWeight: '500', color: '#666666' }}>Tap the mic to speak</span>
+          )}
+          <div className={`waveform ${(isListening || isSpeaking) ? 'active' : ''}`}>
+            <i/><i/><i/><i/><i/>
+          </div>
+        </div>
+
         <button
+          className={`mic-cta ${isListening ? 'listening' : isSpeaking ? 'speaking' : isProcessing ? 'thinking' : ''}`}
+          aria-label="Tap to speak"
           onClick={handleMicClick}
-          style={{
-            width: '64px',
-            height: '64px',
-            borderRadius: '50%',
-            border: 'none',
-            backgroundColor: isListening ? '#d32f2f' : '#007bff',
-            color: '#ffffff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            boxShadow: isListening ? '0 0 0 10px rgba(0, 123, 255, 0.2)' : '0 4px 12px rgba(0,0,0,0.1)',
-            transition: 'all 0.2s ease-in-out'
-          }}
+          disabled={isListening}
         >
-          {isListening ? <MicOff size={32} /> : <Mic size={32} />}
+          <Mic size={28} />
         </button>
-      </footer>
+
+        
+      </div>
     </div>
   );
 };
