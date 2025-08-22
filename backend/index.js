@@ -15,6 +15,7 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// CORS configuration - must be before routes
 app.use(cors({
   origin: [
     "https://loquacious-dango-585db1.netlify.app", // Netlify frontend URL
@@ -24,6 +25,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Helper: remove emojis and variation selectors
 function stripEmojis(text) {
@@ -69,9 +71,6 @@ function computeCheckIn(state = {}) {
   if (!duration) return null;
   return Math.floor(duration * 0.75);
 }
-
-// Configure multer for file uploads (audio for Whisper)
-const upload = multer({ dest: 'uploads/' });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
