@@ -15,6 +15,10 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Configure multer for file uploads (audio for Whisper)
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
 // CORS configuration - must be before routes
 app.use(cors({
   origin: [
