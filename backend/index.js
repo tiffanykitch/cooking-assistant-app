@@ -21,10 +21,7 @@ const upload = multer({ storage });
 
 // CORS configuration - must be before routes
 app.use(cors({
-  origin: [
-    "https://loquacious-dango-585db1.netlify.app", // Netlify frontend URL
-    "http://localhost:5173" // for local development
-  ],
+  origin: true, // Allow all origins temporarily
   credentials: true
 }));
 
